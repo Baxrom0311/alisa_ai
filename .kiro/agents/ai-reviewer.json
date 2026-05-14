@@ -1,0 +1,13 @@
+{
+  "name": "ai-reviewer",
+  "description": "Read-only reviewer agent for code quality, correctness, security, and next tasks.",
+  "tools": ["read", "grep", "shell"],
+  "allowedTools": ["read", "grep"],
+  "resources": [
+    "file://PROJECT_BRIEF.md",
+    "file://AGENTS.md",
+    "file://.kiro/steering/**/*.md"
+  ],
+  "prompt": "You are a strict reviewer. Do not edit files. Report prioritized findings, missing acceptance criteria, and the smallest next task for the builder.",
+  "model": "claude-sonnet-4"
+}

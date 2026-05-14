@@ -1,0 +1,52 @@
+[project]
+# Path to the repository you want the agents to build.
+path = "."
+# Write your product/project explanation here.
+brief_file = "PROJECT_BRIEF.md"
+# Set this to your real verification command, e.g. "pytest -q", "npm test".
+test_command = "cd backend && python3 -m pytest -q 2>/dev/null || true"
+logs_dir = ".agentloop/runs"
+
+[loop]
+# Outer loop: how many times Claude creates/updates the plan.
+plan_cycles = 3
+# Middle loop: how many Kiro-Codex review rounds per plan cycle.
+review_cycles = 5
+# Inner loop: how many times Kiro builds before Codex reviews.
+build_iterations = 10
+# Stop build phase if Kiro produces no changes for this many consecutive iterations.
+no_change_limit = 2
+sleep_between_rounds_sec = 1
+
+[kiro]
+enabled = true
+command = "kiro-cli"
+agent = "ai-builder"
+timeout_sec = 3600
+resume = true
+# Safer default than --trust-all-tools. Add/remove categories for your workflow.
+trust_tools = "read,grep,write,shell"
+trust_all_tools = false
+require_mcp_startup = false
+instruction_arg = "Follow the orchestration instructions from STDIN exactly."
+
+[codex]
+enabled = true
+command = "codex"
+timeout_sec = 3600
+# Reviewer should not edit. Change to workspace-write only if you intentionally let Codex patch.
+sandbox = "read-only"
+
+[claude]
+enabled = true
+command = "claude"
+timeout_sec = 3600
+continue_conversation = false
+instruction_arg = "Follow the orchestration instructions from STDIN exactly."
+
+[telegram]
+# Set enabled = true and fill bot_token + chat_id to receive live updates.
+# You can also set TG_BOT_TOKEN and TG_CHAT_ID environment variables.
+enabled = true
+bot_token = "8860807129:AAF0p6MJbHeARftMYoL1JLcB6nGy2js8Iuw"
+chat_id = "5146421024"
