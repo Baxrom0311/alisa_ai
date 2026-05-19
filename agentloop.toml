@@ -47,8 +47,8 @@ sandbox = "workspace-write"
 # Set enabled = true and fill bot_token + chat_id to receive live updates.
 # You can also set TG_BOT_TOKEN and TG_CHAT_ID environment variables.
 enabled = true
-bot_token = ""
-chat_id = ""
+bot_token = "8860807129:AAF0p6MJbHeARftMYoL1JLcB6nGy2js8Iuw"
+chat_id = "5146421024"
 
 [git]
 # When done=true, automatically push to GitHub.
