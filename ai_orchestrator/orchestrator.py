@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
-"""AI Agent Orchestrator — Enhanced
+"""AI Agent Orchestrator — Kiro Planner + Codex Builder
 
 Three-level nested loop:
-  Outer:  Claude plan cycles          (plan_cycles, default 3)
-  Middle: Kiro-Codex review cycles    (review_cycles, default 5)
-  Inner:  Kiro build iterations       (build_iterations, default 10)
+  Outer:  Kiro plan cycles            (plan_cycles, default 3)
+  Middle: Codex-Kiro review cycles    (review_cycles, default 5)
+  Inner:  Codex build iterations      (build_iterations, default 10)
 
 Each level supports early stopping based on AI output:
   - Inner: stops if builder reports complete or no files change
-  - Middle: stops if Codex verdict is "pass"
-  - Outer: stops if Claude replan marks done
+  - Middle: stops if Kiro review verdict is "pass"
+  - Outer: stops if Kiro replan marks done
+
+Roles:
+  - Kiro (Opus): Planner + Reviewer
+  - Codex: Builder / Code writer
 
 Telegram bot notifications keep you informed without watching the terminal.
 """
@@ -91,11 +95,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "kiro": {
         "enabled": True,
         "command": "kiro-cli",
-        "agent": "ai-builder",
+        "agent": "ai-planner",
         "timeout_sec": 3600,
-        "resume": True,
-        "trust_tools": "read,grep,write,shell",
-        "trust_all_tools": False,
+        "resume": False,
+        "trust_tools": "",
+        "trust_all_tools": True,
         "require_mcp_startup": False,
         "instruction_arg": "Follow the orchestration instructions from STDIN exactly.",
     },
@@ -103,14 +107,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enabled": True,
         "command": "codex",
         "timeout_sec": 3600,
-        "sandbox": "read-only",
-    },
-    "claude": {
-        "enabled": True,
-        "command": "claude",
-        "timeout_sec": 3600,
-        "continue_conversation": False,
-        "instruction_arg": "Follow the orchestration instructions from STDIN exactly.",
+        "sandbox": "workspace-write",
     },
     "telegram": {
         "enabled": False,
@@ -259,7 +256,7 @@ def write_result(path: Path, result: CommandResult) -> None:
 
 def preflight(config: Dict[str, Any], project_root: Path, run_dir: Path) -> None:
     checks: List[Dict[str, Any]] = []
-    for section in ("kiro", "codex", "claude"):
+    for section in ("kiro", "codex"):
         cfg = config.get(section, {})
         if not cfg.get("enabled", False):
             checks.append({"component": section, "enabled": False, "ok": True})
@@ -281,7 +278,7 @@ def preflight(config: Dict[str, Any], project_root: Path, run_dir: Path) -> None
     write_text(run_dir / "preflight.json", json.dumps(checks, indent=2))
     hard_fail = [
         c for c in checks
-        if c.get("component") in {"kiro", "codex", "claude"} and not c.get("ok")
+        if c.get("component") in {"kiro", "codex"} and not c.get("ok")
     ]
     if hard_fail:
         names = ", ".join(c["component"] for c in hard_fail)
@@ -324,6 +321,8 @@ def worktree_hash(project_root: Path) -> str:
     for cmd in [
         "git status --porcelain=v1 || true",
         "git diff --stat || true",
+        "git ls-files --others --exclude-standard | head -200 || true",
+        "find . -maxdepth 3 -name '*.py' -newer .git/HEAD 2>/dev/null | head -50 || true",
     ]:
         res = run_shell("hash", cmd, cwd=project_root, timeout_sec=60)
         parts.append(res.stdout)
@@ -343,13 +342,12 @@ def run_tests(config: Dict[str, Any], project_root: Path, log_dir: Path) -> Tupl
     return result.ok, result.combined(limit=30000)
 
 
-def kiro_builder(
-    config: Dict[str, Any], project_root: Path, prompt: str, resume: bool,
+def kiro_planner(
+    config: Dict[str, Any], project_root: Path, prompt: str,
 ) -> CommandResult:
+    """Kiro used as planner/reviewer (read-only, Opus model)."""
     cfg = config["kiro"]
     cmd = [str(cfg.get("command", "kiro-cli")), "chat", "--no-interactive"]
-    if resume and cfg.get("resume", True):
-        cmd.append("--resume")
     if cfg.get("agent"):
         cmd.extend(["--agent", str(cfg["agent"])])
     if cfg.get("require_mcp_startup"):
@@ -358,41 +356,23 @@ def kiro_builder(
         cmd.append("--trust-all-tools")
     elif cfg.get("trust_tools"):
         cmd.append("--trust-tools=" + str(cfg["trust_tools"]))
-    cmd.append(
-        str(cfg.get("instruction_arg", "Follow the orchestration instructions from STDIN exactly."))
-    )
+    # Pass prompt as the [INPUT] argument
+    cmd.append(prompt)
     return run_command(
-        "kiro-builder", cmd, cwd=project_root,
-        timeout_sec=int(cfg.get("timeout_sec", 3600)), input_text=prompt,
+        "kiro-planner", cmd, cwd=project_root,
+        timeout_sec=int(cfg.get("timeout_sec", 3600)),
     )
 
 
-def codex_review(config: Dict[str, Any], project_root: Path, prompt: str) -> CommandResult:
+def codex_builder(config: Dict[str, Any], project_root: Path, prompt: str) -> CommandResult:
+    """Codex used as the builder/code writer."""
     cfg = config["codex"]
     cmd = [
         str(cfg.get("command", "codex")),
-        "exec", "--sandbox", str(cfg.get("sandbox", "read-only")), "-",
+        "exec", "--sandbox", str(cfg.get("sandbox", "workspace-write")), "-",
     ]
     return run_command(
-        "codex-review", cmd, cwd=project_root,
-        timeout_sec=int(cfg.get("timeout_sec", 3600)), input_text=prompt,
-    )
-
-
-def claude_query(
-    config: Dict[str, Any], project_root: Path, prompt: str,
-    continue_conversation: bool = False,
-) -> CommandResult:
-    cfg = config["claude"]
-    cmd = [str(cfg.get("command", "claude"))]
-    if continue_conversation or cfg.get("continue_conversation", False):
-        cmd.append("-c")
-    cmd.extend([
-        "-p",
-        str(cfg.get("instruction_arg", "Follow the orchestration instructions from STDIN exactly.")),
-    ])
-    return run_command(
-        "claude", cmd, cwd=project_root,
+        "codex-builder", cmd, cwd=project_root,
         timeout_sec=int(cfg.get("timeout_sec", 3600)), input_text=prompt,
     )
 
@@ -467,8 +447,8 @@ def compile_review_history(history: List[Dict[str, Any]]) -> str:
             f"- Builds completed: {h['builds_completed']}\n"
             f"- Tests OK: {h['tests_ok']}\n"
             f"- Builder summary: {h.get('builder_summary', 'N/A')}\n"
-            f"- Codex verdict: {h.get('codex_verdict', 'N/A')}\n"
-            f"- Codex feedback: {h.get('codex_feedback', 'N/A')[:500]}\n"
+            f"- Kiro verdict: {h.get('kiro_verdict', 'N/A')}\n"
+            f"- Kiro feedback: {h.get('kiro_feedback', 'N/A')[:500]}\n"
         )
     return "\n".join(parts)
 
@@ -536,23 +516,23 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
 
     kiro_enabled = config["kiro"].get("enabled", True)
     codex_enabled = config["codex"].get("enabled", True)
-    claude_enabled = config["claude"].get("enabled", True)
 
     print(f"[agentloop] project: {project_root}")
     print(f"[agentloop] logs:    {run_dir}")
     print(f"[agentloop] cycles:  plan={plan_cycles}  review={review_cycles}  build={build_iterations}")
+    print(f"[agentloop] roles:   Kiro=planner+reviewer  Codex=builder")
 
     tg.notify_start(project_root.name, plan_cycles, review_cycles, build_iterations)
 
     # ── State ──
-    claude_plan = ""
+    kiro_plan = ""
     done = False
     final_reason = "Max plan cycles reached."
     total_builds = 0
     pc = 0  # plan cycle counter (set properly in loop)
 
     # ═══════════════════════════════════════════════════════════════
-    #  OUTER LOOP: Claude plan cycles
+    #  OUTER LOOP: Kiro plan cycles
     # ═══════════════════════════════════════════════════════════════
     for pc in range(1, plan_cycles + 1):
         plan_dir = run_dir / f"plan_{pc:02d}"
@@ -562,35 +542,34 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
         print(f"[agentloop] PLAN CYCLE {pc}/{plan_cycles}")
         print(f"{'=' * 60}")
 
-        # ── Claude initial plan (cycle 1 only) ──
+        # ── Kiro initial plan (cycle 1 only) ──
         if pc == 1:
-            if claude_enabled:
+            if kiro_enabled:
                 plan_prompt = render_template(
-                    prompts_dir / "planner_claude.md", brief=brief,
+                    prompts_dir / "planner_kiro.md", brief=brief,
                 )
-                write_text(plan_dir / "claude_plan_prompt.md", plan_prompt)
+                write_text(plan_dir / "kiro_plan_prompt.md", plan_prompt)
                 if args.dry_run:
-                    claude_plan = "DRY RUN: Claude planner not executed."
+                    kiro_plan = "DRY RUN: Kiro planner not executed."
                 else:
-                    result = claude_query(config, project_root, plan_prompt)
-                    write_result(plan_dir / "claude_plan_output.md", result)
-                    claude_plan = result.combined(limit=30000)
+                    result = kiro_planner(config, project_root, plan_prompt)
+                    write_result(plan_dir / "kiro_plan_output.md", result)
+                    kiro_plan = result.combined(limit=30000)
             else:
-                claude_plan = brief  # Use brief as the plan when Claude is disabled
-            tg.notify_plan(pc, plan_cycles, claude_plan[:500])
+                kiro_plan = brief  # Use brief as the plan when Kiro is disabled
+            tg.notify_plan(pc, plan_cycles, kiro_plan[:500])
 
-        # For pc > 1: claude_plan was updated by previous cycle's replan.
-        # Just log it for traceability.
+        # For pc > 1: kiro_plan was updated by previous cycle's replan.
         if pc > 1:
-            write_text(plan_dir / "claude_plan_carried.md", claude_plan)
-            tg.notify_plan(pc, plan_cycles, claude_plan[:500])
+            write_text(plan_dir / "kiro_plan_carried.md", kiro_plan)
+            tg.notify_plan(pc, plan_cycles, kiro_plan[:500])
 
-        codex_feedback = ""
+        kiro_feedback = ""
         review_history: List[Dict[str, Any]] = []
         last_test_output = ""
 
         # ═══════════════════════════════════════════════════════════
-        #  MIDDLE LOOP: Kiro-Codex review cycles
+        #  MIDDLE LOOP: Codex build + Kiro review cycles
         # ═══════════════════════════════════════════════════════════
         for rc in range(1, review_cycles + 1):
             review_dir = plan_dir / f"review_{rc:02d}"
@@ -605,7 +584,7 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
             builds_completed = 0
 
             # ═══════════════════════════════════════════════════════
-            #  INNER LOOP: Kiro build iterations
+            #  INNER LOOP: Codex build iterations
             # ═══════════════════════════════════════════════════════
             for bi in range(1, build_iterations + 1):
                 total_builds += 1
@@ -617,11 +596,11 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
                 if bi == 1:
                     # First build: full prompt with plan + feedback
                     build_prompt = render_template(
-                        prompts_dir / "builder_kiro.md",
+                        prompts_dir / "builder_codex.md",
                         round_no=str(total_builds),
                         brief=trim(brief, 30000),
-                        claude_plan=trim(claude_plan, 30000),
-                        previous_feedback=trim(codex_feedback, 30000),
+                        kiro_plan=trim(kiro_plan, 30000),
+                        previous_feedback=trim(kiro_feedback, 30000),
                         previous_builder_output=trim(builder_output, 16000),
                         repo_snapshot=trim(snapshot, 24000),
                         next_prompt_override="",
@@ -629,47 +608,51 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
                 else:
                     # Continue: lighter prompt
                     build_prompt = render_template(
-                        prompts_dir / "continue_kiro.md",
+                        prompts_dir / "continue_codex.md",
                         build_iter=str(bi),
                         total_build_iters=str(build_iterations),
                         review_cycle=str(rc),
                         brief=trim(brief, 12000),
-                        claude_plan=trim(claude_plan, 12000),
-                        previous_feedback=trim(codex_feedback, 8000),
+                        kiro_plan=trim(kiro_plan, 12000),
+                        previous_feedback=trim(kiro_feedback, 8000),
                         repo_snapshot=trim(snapshot, 12000),
                     )
 
                 write_text(review_dir / f"build_{bi:02d}_prompt.md", build_prompt)
 
-                if args.dry_run or not kiro_enabled:
-                    builder_output = "DRY RUN or Kiro disabled: builder not executed."
+                if args.dry_run or not codex_enabled:
+                    builder_output = "DRY RUN or Codex disabled: builder not executed."
                 else:
                     hash_before = worktree_hash(project_root)
-                    result = kiro_builder(
-                        config, project_root, build_prompt, resume=(bi > 1),
-                    )
+                    result = codex_builder(config, project_root, build_prompt)
                     write_result(review_dir / f"build_{bi:02d}_output.md", result)
                     builder_output = result.combined(limit=40000)
 
                     if not result.ok:
                         builder_output += (
-                            "\n\n[orchestrator] Kiro returned non-zero exit code."
+                            "\n\n[orchestrator] Codex returned non-zero exit code."
                         )
 
                     # No-change detection
                     hash_after = worktree_hash(project_root)
-                    if hash_before == hash_after:
+                    report = extract_json_object(result.stdout or "")
+                    builder_reports_changes = (
+                        report and report.get("files_changed")
+                        and len(report["files_changed"]) > 0
+                    )
+                    if hash_before == hash_after and not builder_reports_changes:
                         no_change_streak += 1
                         print(f"    [agentloop] No change (streak: {no_change_streak})")
                     else:
                         no_change_streak = 0
+                        if builder_reports_changes:
+                            print(f"    [agentloop] Builder changed: {report['files_changed'][:3]}")
 
                     if no_change_streak >= no_change_limit:
                         print("    [agentloop] No-change limit hit — ending build phase")
                         break
 
                     # Builder self-report: complete
-                    report = extract_json_object(result.stdout or "")
                     if report and report.get("state") == "complete":
                         print("    [agentloop] Builder reports complete")
                         break
@@ -684,47 +667,51 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
             tests_ok, test_output = run_tests(config, project_root, review_dir)
             last_test_output = test_output
 
-            # ── Codex review ──
-            codex_verdict = "unknown"
-            if codex_enabled:
+            # ── Kiro review ──
+            kiro_verdict = "unknown"
+            if kiro_enabled:
                 snapshot_after = collect_repo_snapshot(project_root, test_output)
-                codex_prompt = render_template(
-                    prompts_dir / "review_codex.md",
+                review_prompt = render_template(
+                    prompts_dir / "review_kiro.md",
                     round_no=str(rc),
                     brief=trim(brief, 30000),
                     builder_output=trim(builder_output, 24000),
                     repo_snapshot=trim(snapshot_after, 30000),
                     test_output=trim(test_output, 20000),
                 )
-                write_text(review_dir / "codex_prompt.md", codex_prompt)
+                write_text(review_dir / "kiro_review_prompt.md", review_prompt)
 
                 if args.dry_run:
-                    codex_feedback = "DRY RUN: Codex reviewer not executed."
+                    kiro_feedback = "DRY RUN: Kiro reviewer not executed."
                 else:
-                    result = codex_review(config, project_root, codex_prompt)
-                    write_result(review_dir / "codex_output.md", result)
-                    codex_feedback = result.combined(limit=40000)
+                    result = kiro_planner(config, project_root, review_prompt)
+                    write_result(review_dir / "kiro_review_output.md", result)
+                    kiro_feedback = result.combined(limit=40000)
 
                     verdict_json = extract_json_object(result.stdout or "")
                     if verdict_json:
-                        codex_verdict = str(verdict_json.get("verdict", "unknown"))
+                        kiro_verdict = str(verdict_json.get("verdict", "unknown"))
+                        # Extract direct builder instruction
+                        bp = verdict_json.get("builder_prompt", "")
+                        if bp:
+                            kiro_feedback = f"DIRECT INSTRUCTION: {bp}\n\nFull review:\n{kiro_feedback}"
 
-                tg.notify_review(pc, rc, review_cycles, codex_feedback[:300])
+                tg.notify_review(pc, rc, review_cycles, kiro_feedback[:300])
             else:
-                codex_feedback = "Codex reviewer disabled."
+                kiro_feedback = "Kiro reviewer disabled."
 
             review_history.append({
                 "review_cycle": rc,
                 "builds_completed": builds_completed,
                 "tests_ok": tests_ok,
                 "builder_summary": builder_output[:500],
-                "codex_verdict": codex_verdict,
-                "codex_feedback": codex_feedback[:800],
+                "kiro_verdict": kiro_verdict,
+                "kiro_feedback": kiro_feedback[:800],
             })
 
-            # Early stop: Codex says pass
-            if codex_verdict == "pass":
-                print("  [agentloop] Codex verdict: pass — ending review cycles")
+            # Early stop: Kiro says pass
+            if kiro_verdict == "pass":
+                print("  [agentloop] Kiro verdict: pass — ending review cycles")
                 break
 
             if rc < review_cycles:
@@ -733,36 +720,38 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
         # ── End of review cycles ──
 
         # ═══════════════════════════════════════════════════════════
-        #  Claude replan (end of each plan cycle)
+        #  Kiro replan (end of each plan cycle)
         # ═══════════════════════════════════════════════════════════
-        if claude_enabled:
+        if kiro_enabled:
             history_text = compile_review_history(review_history)
             snapshot = collect_repo_snapshot(project_root, last_test_output)
             replan_prompt = render_template(
-                prompts_dir / "replan_claude.md",
+                prompts_dir / "replan_kiro.md",
                 plan_cycle=str(pc),
                 total_plan_cycles=str(plan_cycles),
                 brief=trim(brief, 30000),
-                claude_plan=trim(claude_plan, 20000),
+                kiro_plan=trim(kiro_plan, 20000),
                 history=trim(history_text, 30000),
                 test_output=trim(last_test_output, 12000),
                 repo_snapshot=trim(snapshot, 24000),
             )
-            write_text(plan_dir / "claude_replan_prompt.md", replan_prompt)
+            write_text(plan_dir / "kiro_replan_prompt.md", replan_prompt)
 
             if args.dry_run:
                 replan_text = json.dumps({
                     "done": False, "reason": "dry run",
                     "updated_plan": "Continue implementation.",
+                    "next_review_cycles": review_cycles,
+                    "next_build_iterations": build_iterations,
                 })
             else:
-                replan_result = claude_query(config, project_root, replan_prompt)
-                write_result(plan_dir / "claude_replan_output.md", replan_result)
+                replan_result = kiro_planner(config, project_root, replan_prompt)
+                write_result(plan_dir / "kiro_replan_output.md", replan_result)
                 replan_text = replan_result.stdout or replan_result.stderr
 
             replan_json = extract_json_object(replan_text)
             write_text(
-                plan_dir / "claude_replan_parsed.json",
+                plan_dir / "kiro_replan_parsed.json",
                 json.dumps(replan_json or {}, indent=2),
             )
 
@@ -771,17 +760,62 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
                 final_reason = str(
                     replan_json.get("reason", f"Plan cycle {pc} complete.")
                 )
+                # Dynamic cycles: Kiro decides next cycle parameters
+                if replan_json.get("next_review_cycles"):
+                    review_cycles = min(int(replan_json["next_review_cycles"]), 10)
+                    print(f"  [agentloop] Dynamic: next review_cycles={review_cycles}")
+                if replan_json.get("next_build_iterations"):
+                    build_iterations = min(int(replan_json["next_build_iterations"]), 20)
+                    print(f"  [agentloop] Dynamic: next build_iterations={build_iterations}")
+
                 if not done:
                     updated = str(replan_json.get("updated_plan", "")).strip()
                     if updated:
-                        claude_plan = updated
+                        kiro_plan = updated
                     else:
-                        claude_plan = replan_text
+                        kiro_plan = replan_text
 
-            tg.notify_claude_replan(
+            tg.notify_replan(
                 pc, plan_cycles,
-                (final_reason if done else claude_plan)[:500],
+                (final_reason if done else kiro_plan)[:500],
             )
+
+        # ═══════════════════════════════════════════════════════════
+        #  Auto-discovery: when done, analyze for new opportunities
+        # ═══════════════════════════════════════════════════════════
+        if done and kiro_enabled and not args.dry_run:
+            print(f"\n  [agentloop] Running auto-discovery analysis...")
+            snapshot = collect_repo_snapshot(project_root, last_test_output)
+            discovery_prompt = render_template(
+                prompts_dir / "discovery_kiro.md",
+                brief=trim(brief, 30000),
+                repo_snapshot=trim(snapshot, 24000),
+                test_output=trim(last_test_output, 12000),
+            )
+            write_text(plan_dir / "kiro_discovery_prompt.md", discovery_prompt)
+            discovery_result = kiro_planner(config, project_root, discovery_prompt)
+            write_result(plan_dir / "kiro_discovery_output.md", discovery_result)
+
+            discovery_json = extract_json_object(discovery_result.stdout or "")
+            if discovery_json and discovery_json.get("new_tasks"):
+                new_tasks = discovery_json["new_tasks"]
+                print(f"  [agentloop] Discovery found {len(new_tasks)} new tasks")
+                tg.send(
+                    f"🔎 *Auto-discovery*\n\n"
+                    f"Found {len(new_tasks)} improvement opportunities:\n"
+                    + "\n".join(f"• {t}" for t in new_tasks[:5])
+                )
+                # If significant tasks found, continue with new plan
+                if discovery_json.get("should_continue", False):
+                    done = False
+                    kiro_plan = str(discovery_json.get("updated_plan", ""))
+                    final_reason = "Auto-discovery found new tasks."
+                    # Dynamic cycles for discovery tasks
+                    review_cycles = min(int(discovery_json.get("next_review_cycles", 3)), 10)
+                    build_iterations = min(int(discovery_json.get("next_build_iterations", 5)), 20)
+                    print(f"  [agentloop] Continuing with discovery plan (R={review_cycles}, B={build_iterations})")
+            else:
+                print(f"  [agentloop] No new tasks discovered — truly done.")
 
         if done:
             print(f"\n[agentloop] DONE: {final_reason}")

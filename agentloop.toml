@@ -8,41 +8,36 @@ test_command = "cd backend && python3 -m pytest -q 2>/dev/null || true"
 logs_dir = ".agentloop/runs"
 
 [loop]
-# Outer loop: how many times Claude creates/updates the plan.
+# Outer loop: how many times Kiro creates/updates the plan.
 plan_cycles = 3
-# Middle loop: how many Kiro-Codex review rounds per plan cycle.
+# Middle loop: how many Codex-Kiro review rounds per plan cycle.
 review_cycles = 5
-# Inner loop: how many times Kiro builds before Codex reviews.
+# Inner loop: how many times Codex builds before Kiro reviews.
 build_iterations = 10
-# Stop build phase if Kiro produces no changes for this many consecutive iterations.
+# Stop build phase if Codex produces no changes for this many consecutive iterations.
 no_change_limit = 2
 sleep_between_rounds_sec = 1
 
 [kiro]
+# Kiro is the PLANNER and REVIEWER (uses Opus model).
 enabled = true
 command = "kiro-cli"
-agent = "ai-builder"
+agent = "ai-planner"
 timeout_sec = 3600
-resume = true
-# Safer default than --trust-all-tools. Add/remove categories for your workflow.
-trust_tools = "read,grep,write,shell"
-trust_all_tools = false
+resume = false
+# trust-all-tools needed for non-interactive mode
+trust_tools = ""
+trust_all_tools = true
 require_mcp_startup = false
 instruction_arg = "Follow the orchestration instructions from STDIN exactly."
 
 [codex]
+# Codex is the BUILDER / code writer.
 enabled = true
 command = "codex"
 timeout_sec = 3600
-# Reviewer should not edit. Change to workspace-write only if you intentionally let Codex patch.
-sandbox = "read-only"
-
-[claude]
-enabled = true
-command = "claude"
-timeout_sec = 3600
-continue_conversation = false
-instruction_arg = "Follow the orchestration instructions from STDIN exactly."
+# Builder needs write access.
+sandbox = "workspace-write"
 
 [telegram]
 # Set enabled = true and fill bot_token + chat_id to receive live updates.

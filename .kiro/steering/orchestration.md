@@ -1,8 +1,16 @@
 # Orchestration steering
 
-Kiro is used as the builder in a multi-agent loop.
+Kiro (Opus) is used as the planner and reviewer in a multi-agent loop.
+Codex is used as the builder/code writer.
 
-Builder expectations:
+Planner/Reviewer (Kiro) expectations:
+- Create actionable implementation plans.
+- Review builder output for correctness and completeness.
+- Provide focused, concrete feedback.
+- Do not edit files — read-only mode.
+- Return structured JSON when requested.
+
+Builder (Codex) expectations:
 - Make concrete edits.
 - Avoid endless planning.
 - Run verification after meaningful changes.

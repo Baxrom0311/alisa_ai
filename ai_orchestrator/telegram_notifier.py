@@ -55,11 +55,11 @@ class TelegramNotifier:
     def notify_review(self, plan_cycle: int, review_cycle: int,
                       total: int, snippet: str) -> None:
         self.send(
-            f"🔍 *Codex review* P{plan_cycle} R{review_cycle}/{total}\n\n{_esc(snippet)}"
+            f"🔍 *Kiro review* P{plan_cycle} R{review_cycle}/{total}\n\n{_esc(snippet)}"
         )
 
-    def notify_claude_replan(self, cycle: int, total: int, summary: str) -> None:
-        self.send(f"🧠 *Claude replan* {cycle}/{total}\n\n{_esc(summary)}")
+    def notify_replan(self, cycle: int, total: int, summary: str) -> None:
+        self.send(f"🧠 *Kiro replan* {cycle}/{total}\n\n{_esc(summary)}")
 
     def notify_error(self, error: str) -> None:
         self.send(f"❌ *Error*\n\n`{_esc(error[:1500])}`")
