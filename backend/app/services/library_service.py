@@ -4,9 +4,15 @@ from sqlalchemy.orm import selectinload
 from fastapi import HTTPException, status
 from typing import List, Optional
 from datetime import datetime, timezone
-from ..models.library import LibraryEntry
+from ..models.audio import AudioFile
+from ..models.library import LibraryEntry, ListeningProgress
 from ..models.book import Book
-from ..schemas.library import LibraryStatusUpdate, ReadingProgressUpdate, LibraryEntryResponse
+from ..schemas.library import (
+    LibraryStatusUpdate,
+    ReadingProgressUpdate,
+    LibraryEntryResponse,
+    UNSTARTED_READING_STATUSES,
+)
 from ..schemas.book import BookResponse, book_cover_url
 
 
@@ -198,7 +204,24 @@ async def update_status(
             detail="Book not found in library"
         )
     
-    entry.status = status_data.status
+    if status_data.status is not None:
+        entry.status = status_data.status
+        if status_data.status in UNSTARTED_READING_STATUSES:
+            entry.current_page = 0
+            entry.last_read_at = None
+            result = await db.execute(
+                select(ListeningProgress)
+                .join(AudioFile, ListeningProgress.audio_id == AudioFile.id)
+                .where(
+                    ListeningProgress.user_id == user_id,
+                    AudioFile.book_id == book_id,
+                )
+            )
+            progress = result.scalar_one_or_none()
+            if progress:
+                progress.position_seconds = 0.0
+        else:
+            entry.last_read_at = datetime.now(timezone.utc)
     if status_data.is_favorite is not None:
         entry.is_favorite = status_data.is_favorite
     
@@ -249,10 +272,12 @@ async def update_reading_progress(
     
     if total_pages is not None and progress_data.current_page >= total_pages:
         entry.status = "completed"
-    elif entry.status == "want_to_read" or (
-        total_pages is not None
-        and progress_data.current_page < total_pages
-        and entry.status == "completed"
+    elif progress_data.current_page > 0 and (
+        entry.status in UNSTARTED_READING_STATUSES or (
+            total_pages is not None
+            and progress_data.current_page < total_pages
+            and entry.status == "completed"
+        )
     ):
         entry.status = "reading"
     

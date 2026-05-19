@@ -9,7 +9,7 @@ class LibraryEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
     book_id = Column(Integer, ForeignKey("books.id"), index=True, nullable=False)
-    status = Column(String, default="want_to_read", nullable=False)  # want_to_read, reading, completed
+    status = Column(String, default="want_to_read", nullable=False)  # want_to_read/unread, reading, completed
     is_favorite = Column(Boolean, default=False, nullable=False)
     current_page = Column(Integer, default=0, nullable=False)
     last_read_at = Column(DateTime, nullable=True)

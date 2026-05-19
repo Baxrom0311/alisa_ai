@@ -1,9 +1,10 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from datetime import datetime
 from typing import Optional, List, Literal
 from .book import BookResponse
 
-ReadingStatus = Literal["want_to_read", "reading", "completed"]
+ReadingStatus = Literal["want_to_read", "unread", "reading", "completed"]
+UNSTARTED_READING_STATUSES = {"want_to_read", "unread"}
 
 
 class LibraryEntryResponse(BaseModel):
@@ -21,8 +22,14 @@ class LibraryEntryResponse(BaseModel):
 
 
 class LibraryStatusUpdate(BaseModel):
-    status: ReadingStatus
+    status: Optional[ReadingStatus] = None
     is_favorite: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def require_status_or_favorite(self) -> "LibraryStatusUpdate":
+        if self.status is None and self.is_favorite is None:
+            raise ValueError("At least one of status or is_favorite must be provided")
+        return self
 
 
 class ReadingProgressUpdate(BaseModel):

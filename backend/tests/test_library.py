@@ -1,7 +1,6 @@
-import pytest
 from fastapi.testclient import TestClient
 import io
-from tests.audio_helpers import make_wav_audio, wav_upload_data
+from tests.audio_helpers import DEFAULT_AUDIO_DURATION_SECONDS, make_wav_audio, wav_upload_data
 
 
 def create_user_and_login(client: TestClient, email: str = "user@example.com"):
@@ -140,6 +139,41 @@ def test_update_book_status(client: TestClient):
     data = response.json()
     assert data["status"] == "reading"
     assert data["is_favorite"] == True
+    assert data["last_read_at"] is not None
+
+
+def test_update_book_status_can_toggle_favorite_without_status(client: TestClient):
+    book_id = create_admin_and_book(client)
+    headers = create_user_and_login(client, "favorite-only@example.com")
+
+    assert client.post(f"/api/library/{book_id}", headers=headers).status_code == 201
+
+    response = client.put(
+        f"/api/library/{book_id}/status",
+        json={"is_favorite": True},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "want_to_read"
+    assert data["is_favorite"] is True
+    assert data["last_read_at"] is None
+
+
+def test_update_book_status_rejects_empty_payload(client: TestClient):
+    book_id = create_admin_and_book(client)
+    headers = create_user_and_login(client, "empty-status@example.com")
+
+    assert client.post(f"/api/library/{book_id}", headers=headers).status_code == 201
+
+    response = client.put(
+        f"/api/library/{book_id}/status",
+        json={},
+        headers=headers,
+    )
+
+    assert response.status_code == 422
 
 
 def test_get_library_filters_by_status(client: TestClient):
@@ -159,6 +193,61 @@ def test_get_library_filters_by_status(client: TestClient):
     response = client.get("/api/library?status=completed", headers=headers)
     assert response.status_code == 200
     assert response.json()["total"] == 0
+
+
+def test_library_accepts_unread_status(client: TestClient):
+    book_id = create_admin_and_book(client)
+    headers = create_user_and_login(client, "unread-status@example.com")
+
+    assert client.post(f"/api/library/{book_id}", headers=headers).status_code == 201
+
+    response = client.put(
+        f"/api/library/{book_id}/status",
+        json={"status": "unread", "is_favorite": False},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "unread"
+
+    filter_response = client.get("/api/library?status=unread", headers=headers)
+    assert filter_response.status_code == 200
+    data = filter_response.json()
+    assert data["total"] == 1
+    assert data["items"][0]["book_id"] == book_id
+
+
+def test_marking_book_unread_resets_saved_progress(client: TestClient):
+    admin_headers = create_admin_and_login(client)
+    book_response = client.post(
+        "/api/books",
+        json={"title": "Resettable Book", "author": "Test Author", "total_pages": 10},
+        headers=admin_headers,
+    )
+    assert book_response.status_code == 201
+    book_id = book_response.json()["id"]
+    headers = create_user_and_login(client, "reset-unread@example.com")
+
+    assert client.post(f"/api/library/{book_id}", headers=headers).status_code == 201
+    progress_response = client.put(
+        f"/api/library/{book_id}/progress",
+        json={"current_page": 5},
+        headers=headers,
+    )
+    assert progress_response.status_code == 200
+    assert progress_response.json()["status"] == "reading"
+    assert progress_response.json()["last_read_at"] is not None
+
+    response = client.put(
+        f"/api/library/{book_id}/status",
+        json={"status": "unread"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "unread"
+    assert data["current_page"] == 0
+    assert data["last_read_at"] is None
 
 
 def test_get_library_rejects_invalid_status_filter(client: TestClient):
@@ -213,6 +302,47 @@ def test_update_reading_progress(client: TestClient):
     data = response.json()
     assert data["current_page"] == 50
     assert data["status"] == "reading"  # Should auto-update to reading
+
+
+def test_update_reading_progress_at_zero_keeps_unstarted_status(client: TestClient):
+    book_id = create_admin_and_book(client)
+    headers = create_user_and_login(client, "zero-page-progress@example.com")
+
+    assert client.post(f"/api/library/{book_id}", headers=headers).status_code == 201
+
+    response = client.put(
+        f"/api/library/{book_id}/progress",
+        json={"current_page": 0},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["current_page"] == 0
+    assert data["status"] == "want_to_read"
+    assert data["last_read_at"] is not None
+
+
+def test_update_reading_progress_moves_unread_to_reading(client: TestClient):
+    book_id = create_admin_and_book(client)
+    headers = create_user_and_login(client, "unread-progress@example.com")
+
+    assert client.post(f"/api/library/{book_id}", headers=headers).status_code == 201
+    assert client.put(
+        f"/api/library/{book_id}/status",
+        json={"status": "unread"},
+        headers=headers,
+    ).status_code == 200
+
+    response = client.put(
+        f"/api/library/{book_id}/progress",
+        json={"current_page": 3},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["current_page"] == 3
+    assert response.json()["status"] == "reading"
 
 
 def test_update_reading_progress_rejects_pages_beyond_total(client: TestClient):
@@ -351,6 +481,46 @@ def test_get_library_activity_orders_by_recent_progress(client: TestClient):
     assert set(book_ids) == {first_book_id, second_book_id}
 
 
+def test_get_library_activity_includes_manual_status_updates(client: TestClient):
+    headers = create_user_and_login(client, "status-activity@example.com")
+
+    first_book = client.post(
+        "/api/books",
+        json={"title": "Manually Started", "author": "Reader"},
+        headers=headers,
+    )
+    assert first_book.status_code == 201
+    first_book_id = first_book.json()["id"]
+
+    second_book = client.post(
+        "/api/books",
+        json={"title": "Only Added Later", "author": "Reader"},
+        headers=headers,
+    )
+    assert second_book.status_code == 201
+    second_book_id = second_book.json()["id"]
+
+    assert client.post(f"/api/library/{first_book_id}", headers=headers).status_code == 201
+    assert client.post(f"/api/library/{second_book_id}", headers=headers).status_code == 201
+
+    status_response = client.put(
+        f"/api/library/{first_book_id}/status",
+        json={"status": "completed"},
+        headers=headers,
+    )
+    assert status_response.status_code == 200
+    assert status_response.json()["last_read_at"] is not None
+
+    activity_response = client.get("/api/library/activity", headers=headers)
+
+    assert activity_response.status_code == 200
+    data = activity_response.json()
+    assert data["total"] == 2
+    assert data["items"][0]["book_id"] == first_book_id
+    assert data["items"][0]["status"] == "completed"
+    assert {item["book_id"] for item in data["items"]} == {first_book_id, second_book_id}
+
+
 def test_audio_progress_updates_library_activity(client: TestClient):
     admin_headers = create_admin_and_login(client)
     audio_book_id = create_book_as_admin(client, admin_headers, "Audio Activity")
@@ -374,8 +544,95 @@ def test_audio_progress_updates_library_activity(client: TestClient):
     data = response.json()
     assert data["total"] == 2
     assert data["items"][0]["book_id"] == audio_book_id
+    assert data["items"][0]["status"] == "reading"
     assert data["items"][0]["last_read_at"] is not None
     assert {item["book_id"] for item in data["items"]} == {audio_book_id, added_only_book_id}
+
+
+def test_audio_progress_at_zero_keeps_unstarted_library_status(client: TestClient):
+    admin_headers = create_admin_and_login(client)
+    book_id = create_book_as_admin(client, admin_headers, "Audio Zero Activity")
+    upload_audio_as_admin(client, admin_headers, book_id)
+    reader_headers = create_user_and_login(client, "audio-zero@example.com")
+
+    assert client.post(f"/api/library/{book_id}", headers=reader_headers).status_code == 201
+
+    progress_response = client.put(
+        f"/api/books/{book_id}/audio/progress",
+        json={"position_seconds": 0},
+        headers=reader_headers,
+    )
+    assert progress_response.status_code == 200
+
+    library_response = client.get("/api/library", headers=reader_headers)
+    assert library_response.status_code == 200
+    data = library_response.json()
+    assert data["total"] == 1
+    assert data["items"][0]["book_id"] == book_id
+    assert data["items"][0]["status"] == "want_to_read"
+    assert data["items"][0]["last_read_at"] is not None
+
+
+def test_audio_progress_marks_library_entry_completed(client: TestClient):
+    admin_headers = create_admin_and_login(client)
+    book_id = create_book_as_admin(client, admin_headers, "Completed Audio Activity")
+    upload_audio_as_admin(client, admin_headers, book_id)
+    reader_headers = create_user_and_login(client, "audio-complete@example.com")
+
+    assert client.post(f"/api/library/{book_id}", headers=reader_headers).status_code == 201
+
+    progress_response = client.put(
+        f"/api/books/{book_id}/audio/progress",
+        json={"position_seconds": DEFAULT_AUDIO_DURATION_SECONDS},
+        headers=reader_headers,
+    )
+    assert progress_response.status_code == 200
+
+    library_response = client.get("/api/library", headers=reader_headers)
+    assert library_response.status_code == 200
+    data = library_response.json()
+    assert data["total"] == 1
+    assert data["items"][0]["book_id"] == book_id
+    assert data["items"][0]["status"] == "completed"
+    assert data["items"][0]["last_read_at"] is not None
+
+
+def test_marking_book_unread_resets_audio_progress(client: TestClient):
+    admin_headers = create_admin_and_login(client)
+    book_id = create_book_as_admin(client, admin_headers, "Reset Audio Activity")
+    upload_audio_as_admin(client, admin_headers, book_id)
+    reader_headers = create_user_and_login(client, "audio-reset@example.com")
+
+    assert client.post(f"/api/library/{book_id}", headers=reader_headers).status_code == 201
+    progress_response = client.put(
+        f"/api/books/{book_id}/audio/progress",
+        json={"position_seconds": 30},
+        headers=reader_headers,
+    )
+    assert progress_response.status_code == 200
+
+    saved_progress_response = client.get(
+        f"/api/books/{book_id}/audio/progress",
+        headers=reader_headers,
+    )
+    assert saved_progress_response.status_code == 200
+    assert saved_progress_response.json()["position_seconds"] == 30
+
+    status_response = client.put(
+        f"/api/library/{book_id}/status",
+        json={"status": "unread"},
+        headers=reader_headers,
+    )
+    assert status_response.status_code == 200
+    assert status_response.json()["status"] == "unread"
+    assert status_response.json()["last_read_at"] is None
+
+    reset_progress_response = client.get(
+        f"/api/books/{book_id}/audio/progress",
+        headers=reader_headers,
+    )
+    assert reset_progress_response.status_code == 200
+    assert reset_progress_response.json()["position_seconds"] == 0
 
 
 def test_audio_progress_without_library_entry_does_not_create_library_entry(client: TestClient):

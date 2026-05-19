@@ -17,6 +17,7 @@ from ..models.audio import AudioFile
 from ..models.library import LibraryEntry, ListeningProgress
 from ..models.book import Book
 from ..schemas.audio import AudioProgressUpdate, AudioProgressResponse
+from ..schemas.library import UNSTARTED_READING_STATUSES
 from ..services.storage_service import get_storage_backend
 from ..utils.file_validation import AUDIO_FILE_TYPES, prepare_validated_upload
 
@@ -283,6 +284,13 @@ async def save_progress(
     library_entry = result.scalar_one_or_none()
     if library_entry:
         library_entry.last_read_at = datetime.now(timezone.utc)
+        if progress_data.position_seconds >= audio.duration_seconds:
+            library_entry.status = "completed"
+        elif progress_data.position_seconds > 0 and (
+            library_entry.status in UNSTARTED_READING_STATUSES
+            or library_entry.status == "completed"
+        ):
+            library_entry.status = "reading"
     
     await db.commit()
     await db.refresh(progress)

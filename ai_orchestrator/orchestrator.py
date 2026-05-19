@@ -91,6 +91,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "build_iterations": 10,
         "no_change_limit": 2,
         "sleep_between_rounds_sec": 1,
+        "max_total_builds": 50,
+        "max_discovery_rounds": 2,
     },
     "kiro": {
         "enabled": True,
@@ -113,6 +115,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "enabled": False,
         "bot_token": "",
         "chat_id": "",
+    },
+    "git": {
+        "auto_push": False,
+        "branch": "main",
+        "commit_message": "",
     },
 }
 
@@ -513,6 +520,8 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
     build_iterations = int(config["loop"].get("build_iterations", 10))
     no_change_limit = int(config["loop"].get("no_change_limit", 2))
     sleep_sec = float(config["loop"].get("sleep_between_rounds_sec", 1))
+    max_total_builds = int(config["loop"].get("max_total_builds", 50))
+    max_discovery_rounds = int(config["loop"].get("max_discovery_rounds", 2))
 
     kiro_enabled = config["kiro"].get("enabled", True)
     codex_enabled = config["codex"].get("enabled", True)
@@ -529,6 +538,7 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
     done = False
     final_reason = "Max plan cycles reached."
     total_builds = 0
+    discovery_rounds = 0
     pc = 0  # plan cycle counter (set properly in loop)
 
     # ═══════════════════════════════════════════════════════════════
@@ -590,6 +600,13 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
                 total_builds += 1
                 builds_completed = bi
                 print(f"    [agentloop] Build {bi}/{build_iterations}  (total #{total_builds})")
+
+                # Safety: max total builds limit
+                if total_builds > max_total_builds:
+                    print(f"    [agentloop] Max total builds ({max_total_builds}) reached — stopping")
+                    done = True
+                    final_reason = f"Max total builds limit ({max_total_builds}) reached."
+                    break
 
                 snapshot = collect_repo_snapshot(project_root)
 
@@ -784,38 +801,40 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
         #  Auto-discovery: when done, analyze for new opportunities
         # ═══════════════════════════════════════════════════════════
         if done and kiro_enabled and not args.dry_run:
-            print(f"\n  [agentloop] Running auto-discovery analysis...")
-            snapshot = collect_repo_snapshot(project_root, last_test_output)
-            discovery_prompt = render_template(
-                prompts_dir / "discovery_kiro.md",
-                brief=trim(brief, 30000),
-                repo_snapshot=trim(snapshot, 24000),
-                test_output=trim(last_test_output, 12000),
-            )
-            write_text(plan_dir / "kiro_discovery_prompt.md", discovery_prompt)
-            discovery_result = kiro_planner(config, project_root, discovery_prompt)
-            write_result(plan_dir / "kiro_discovery_output.md", discovery_result)
-
-            discovery_json = extract_json_object(discovery_result.stdout or "")
-            if discovery_json and discovery_json.get("new_tasks"):
-                new_tasks = discovery_json["new_tasks"]
-                print(f"  [agentloop] Discovery found {len(new_tasks)} new tasks")
-                tg.send(
-                    f"🔎 *Auto-discovery*\n\n"
-                    f"Found {len(new_tasks)} improvement opportunities:\n"
-                    + "\n".join(f"• {t}" for t in new_tasks[:5])
-                )
-                # If significant tasks found, continue with new plan
-                if discovery_json.get("should_continue", False):
-                    done = False
-                    kiro_plan = str(discovery_json.get("updated_plan", ""))
-                    final_reason = "Auto-discovery found new tasks."
-                    # Dynamic cycles for discovery tasks
-                    review_cycles = min(int(discovery_json.get("next_review_cycles", 3)), 10)
-                    build_iterations = min(int(discovery_json.get("next_build_iterations", 5)), 20)
-                    print(f"  [agentloop] Continuing with discovery plan (R={review_cycles}, B={build_iterations})")
+            discovery_rounds += 1
+            if discovery_rounds > max_discovery_rounds:
+                print(f"  [agentloop] Max discovery rounds ({max_discovery_rounds}) reached — stopping")
             else:
-                print(f"  [agentloop] No new tasks discovered — truly done.")
+                print(f"  [agentloop] Running auto-discovery analysis ({discovery_rounds}/{max_discovery_rounds})...")
+                snapshot = collect_repo_snapshot(project_root, last_test_output)
+                discovery_prompt = render_template(
+                    prompts_dir / "discovery_kiro.md",
+                    brief=trim(brief, 30000),
+                    repo_snapshot=trim(snapshot, 24000),
+                    test_output=trim(last_test_output, 12000),
+                )
+                write_text(plan_dir / "kiro_discovery_prompt.md", discovery_prompt)
+                discovery_result = kiro_planner(config, project_root, discovery_prompt)
+                write_result(plan_dir / "kiro_discovery_output.md", discovery_result)
+
+                discovery_json = extract_json_object(discovery_result.stdout or "")
+                if discovery_json and discovery_json.get("new_tasks"):
+                    new_tasks = discovery_json["new_tasks"]
+                    print(f"  [agentloop] Discovery found {len(new_tasks)} new tasks")
+                    tg.send(
+                        f"🔎 *Auto-discovery* ({discovery_rounds}/{max_discovery_rounds})\n\n"
+                        f"Found {len(new_tasks)} improvement opportunities:\n"
+                        + "\n".join(f"• {t}" for t in new_tasks[:5])
+                    )
+                    if discovery_json.get("should_continue", False):
+                        done = False
+                        kiro_plan = str(discovery_json.get("updated_plan", ""))
+                        final_reason = "Auto-discovery found new tasks."
+                        review_cycles = min(int(discovery_json.get("next_review_cycles", 3)), 10)
+                        build_iterations = min(int(discovery_json.get("next_build_iterations", 5)), 20)
+                        print(f"  [agentloop] Continuing with discovery plan (R={review_cycles}, B={build_iterations})")
+                else:
+                    print(f"  [agentloop] No new tasks discovered — truly done.")
 
         if done:
             print(f"\n[agentloop] DONE: {final_reason}")
@@ -837,6 +856,44 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
     write_text(run_dir / "summary.json", json.dumps(summary, indent=2))
     tg.notify_done(summary)
     print(json.dumps(summary, indent=2))
+
+    # ═══════════════════════════════════════════════════════════════
+    #  Git push when production-ready
+    # ═══════════════════════════════════════════════════════════════
+    git_cfg = config.get("git", {})
+    if done and git_cfg.get("auto_push", False) and not args.dry_run:
+        branch = str(git_cfg.get("branch", "main"))
+        commit_msg = str(git_cfg.get("commit_message", f"[agentloop] Production-ready: {final_reason[:80]}"))
+        print(f"\n[agentloop] Pushing to GitHub ({branch})...")
+        tg.send(f"📦 *Pushing to GitHub* branch: `{branch}`")
+
+        # git add all changes
+        res = run_shell("git-add", "git add -A", cwd=project_root, timeout_sec=60)
+        if not res.ok:
+            print(f"[agentloop] git add failed: {res.stderr}")
+        else:
+            # git commit
+            res = run_shell(
+                "git-commit",
+                f'git commit -m "{commit_msg}"',
+                cwd=project_root, timeout_sec=60,
+            )
+            if not res.ok and "nothing to commit" not in res.stdout + res.stderr:
+                print(f"[agentloop] git commit failed: {res.stderr}")
+            else:
+                # git push
+                res = run_shell(
+                    "git-push",
+                    f"git push -u origin {branch}",
+                    cwd=project_root, timeout_sec=120,
+                )
+                if res.ok:
+                    print(f"[agentloop] ✅ Pushed to origin/{branch}")
+                    tg.send(f"✅ *Pushed to GitHub* origin/{branch}")
+                else:
+                    print(f"[agentloop] git push failed: {res.stderr}")
+                    tg.send(f"❌ *Push failed*: {res.stderr[:200]}")
+
     return 0 if done else 2
 
 
