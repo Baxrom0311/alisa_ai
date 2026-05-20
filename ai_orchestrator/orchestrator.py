@@ -32,6 +32,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import tomllib  # Python 3.11+
@@ -372,16 +373,57 @@ def kiro_planner(
 
 
 def codex_builder(config: Dict[str, Any], project_root: Path, prompt: str) -> CommandResult:
-    """Codex used as the builder/code writer."""
+    """Builder agent — uses Kiro with ai-builder agent (replaces Codex)."""
     cfg = config["codex"]
-    cmd = [
-        str(cfg.get("command", "codex")),
-        "exec", "--sandbox", str(cfg.get("sandbox", "workspace-write")), "-",
-    ]
+    cmd = [str(cfg.get("command", "kiro-cli")), "chat", "--no-interactive"]
+    if cfg.get("agent"):
+        cmd.extend(["--agent", str(cfg["agent"])])
+    if cfg.get("trust_all_tools"):
+        cmd.append("--trust-all-tools")
+    elif cfg.get("trust_tools"):
+        cmd.append("--trust-tools=" + str(cfg["trust_tools"]))
+    cmd.append(prompt)
     return run_command(
-        "codex-builder", cmd, cwd=project_root,
-        timeout_sec=int(cfg.get("timeout_sec", 3600)), input_text=prompt,
+        "kiro-builder", cmd, cwd=project_root,
+        timeout_sec=int(cfg.get("timeout_sec", 3600)),
     )
+
+
+def parallel_build(
+    config: Dict[str, Any],
+    project_root: Path,
+    prompts: List[str],
+    review_dir: Path,
+    build_offset: int = 0,
+) -> List[CommandResult]:
+    """Run multiple builders in parallel. Each gets a separate prompt/task."""
+    max_workers = int(config.get("parallel", {}).get("builders", 1))
+    if max_workers <= 1 or len(prompts) <= 1:
+        # Sequential fallback
+        results = []
+        for i, prompt in enumerate(prompts):
+            write_text(review_dir / f"build_{build_offset + i + 1:02d}_prompt.md", prompt)
+            r = codex_builder(config, project_root, prompt)
+            write_result(review_dir / f"build_{build_offset + i + 1:02d}_output.md", r)
+            results.append(r)
+        return results
+
+    # Parallel execution
+    results: List[Optional[CommandResult]] = [None] * len(prompts)
+
+    def _run_one(idx: int, prompt: str) -> Tuple[int, CommandResult]:
+        write_text(review_dir / f"build_{build_offset + idx + 1:02d}_prompt.md", prompt)
+        r = codex_builder(config, project_root, prompt)
+        write_result(review_dir / f"build_{build_offset + idx + 1:02d}_output.md", r)
+        return idx, r
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(prompts))) as pool:
+        futures = {pool.submit(_run_one, i, p): i for i, p in enumerate(prompts)}
+        for future in as_completed(futures):
+            idx, result = future.result()
+            results[idx] = result
+
+    return [r for r in results if r is not None]
 
 
 # ── JSON extraction ────────────────────────────────────────────────
@@ -509,8 +551,8 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
     # ── Telegram ──
     tg_cfg = config.get("telegram", {})
     tg = TelegramNotifier(
-        bot_token=tg_cfg.get("bot_token", "") or os.environ.get("TG_BOT_TOKEN", ""),
-        chat_id=tg_cfg.get("chat_id", "") or os.environ.get("TG_CHAT_ID", ""),
+        bot_token=os.environ.get("TELEGRAM_BOT_TOKEN", "") or tg_cfg.get("bot_token", ""),
+        chat_id=os.environ.get("TELEGRAM_CHAT_ID", "") or tg_cfg.get("chat_id", ""),
         enabled=tg_cfg.get("enabled", False),
     )
 
@@ -898,8 +940,43 @@ def main(argv: Optional[List[str]] = None) -> int:  # noqa: C901
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except OrchestratorError as exc:
-        print(f"[agentloop:error] {exc}", file=sys.stderr)
+    import traceback
+
+    MAX_RETRIES = 999  # Deyarli cheksiz — ertalabgacha ishlaydi
+    RETRY_DELAY = 30   # 30 sek kutib qayta urinadi
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            exit_code = main()
+            break  # Normal tugadi
+        except OrchestratorError as exc:
+            print(f"[agentloop:error] {exc}", file=sys.stderr)
+            break  # Config xatosi — qayta urinish foydasiz
+        except KeyboardInterrupt:
+            print("\n[agentloop] Interrupted by user.")
+            break
+        except Exception as exc:
+            print(f"[agentloop:crash] Attempt {attempt}: {exc}", file=sys.stderr)
+            traceback.print_exc()
+            # Telegram ga xabar yuborish
+            try:
+                import tomllib
+                cfg_path = Path(sys.argv[sys.argv.index("--config") + 1]) if "--config" in sys.argv else Path("agentloop.toml")
+                with open(cfg_path, "rb") as f:
+                    cfg = tomllib.load(f)
+                tg_cfg = cfg.get("telegram", {})
+                from ai_orchestrator.telegram_notifier import TelegramNotifier
+                tg = TelegramNotifier(
+                    bot_token=tg_cfg.get("bot_token", ""),
+                    chat_id=tg_cfg.get("chat_id", ""),
+                    enabled=tg_cfg.get("enabled", False),
+                )
+                tg.notify_error(f"Crash #{attempt}: {str(exc)[:200]}\n{RETRY_DELAY}s dan keyin qayta urinadi...")
+            except Exception:
+                pass
+            print(f"[agentloop] Retrying in {RETRY_DELAY}s...")
+            time.sleep(RETRY_DELAY)
+    else:
+        print("[agentloop] Max retries reached. Stopping.", file=sys.stderr)
         raise SystemExit(1)
+    raise SystemExit(exit_code if 'exit_code' in dir() else 1)

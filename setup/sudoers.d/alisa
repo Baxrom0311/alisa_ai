@@ -1,0 +1,2 @@
+# Allow alisa user to restart the alisa systemd service without password
+alisa ALL=(root) NOPASSWD: /bin/systemctl restart alisa.service

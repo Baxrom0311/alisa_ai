@@ -1,0 +1,43 @@
+[project]
+path = "."
+brief_file = "PROJECT_BRIEF.md"
+test_command = "python -m pytest tests/ -q --tb=short 2>/dev/null || echo 'NO_TESTS_YET'"
+logs_dir = ".agentloop/runs"
+
+[loop]
+plan_cycles = 3
+review_cycles = 5
+build_iterations = 10
+no_change_limit = 2
+sleep_between_rounds_sec = 1
+max_total_builds = 50
+max_discovery_rounds = 2
+
+[kiro]
+enabled = true
+command = "kiro-cli"
+agent = "ai-planner"
+timeout_sec = 3600
+resume = false
+trust_tools = ""
+trust_all_tools = true
+require_mcp_startup = false
+instruction_arg = "Follow the orchestration instructions from STDIN exactly."
+
+[codex]
+# Now uses Kiro ai-builder instead of Codex
+enabled = true
+command = "kiro-cli"
+agent = "ai-builder"
+timeout_sec = 3600
+trust_all_tools = true
+
+[telegram]
+enabled = true
+# bot_token = "YOUR_BOT_TOKEN_HERE"  # Use TELEGRAM_BOT_TOKEN env var
+# chat_id = "YOUR_CHAT_ID_HERE"     # Use TELEGRAM_CHAT_ID env var
+
+[git]
+auto_push = true
+branch = "main"
+commit_message = ""

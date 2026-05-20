@@ -1,0 +1,31 @@
+[Unit]
+Description=Alisa Telegram Bot
+After=network.target alisa.service
+Wants=alisa.service
+
+[Service]
+Type=simple
+User=alisa
+Group=alisa
+WorkingDirectory=/opt/alisa
+Environment=PYTHONPATH=/opt/alisa
+EnvironmentFile=-/etc/alisa/environment
+ExecStart=/opt/alisa/venv/bin/python /opt/alisa/run_telegram_bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits
+MemoryMax=512M
+CPUQuota=20%
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/alisa/logs /tmp
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

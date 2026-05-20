@@ -1,0 +1,31 @@
+[Unit]
+Description=Alisa AI Assistant
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+User=alisa
+Group=alisa
+WorkingDirectory=/opt/alisa
+Environment=PYTHONPATH=/opt/alisa
+EnvironmentFile=-/etc/alisa/environment
+ExecStart=/opt/alisa/venv/bin/python /opt/alisa/main.py --mode all
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits for Raspberry Pi
+MemoryMax=2G
+CPUQuota=80%
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/alisa/logs /tmp
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

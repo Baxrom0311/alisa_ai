@@ -110,3 +110,21 @@ Every run creates:
 - Never commit `.env` or auth files.
 - Use Git branches before long runs.
 - Keep a real test command configured as soon as possible.
+
+## Optional Dependencies
+
+### openWakeWord (Recommended for Production)
+
+For more efficient wake word detection, you can install openWakeWord:
+
+```bash
+pip install openwakeword>=0.5.0
+```
+
+When available, Alisa will automatically use openWakeWord instead of the energy-gated transcription method, providing:
+- Lower CPU usage
+- Better accuracy  
+- Faster response times
+- Less dependency on STT for wake word detection
+
+If openWakeWord is not installed, Alisa falls back gracefully to the built-in energy-gated method.

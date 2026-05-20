@@ -2,9 +2,14 @@
 __pycache__/
 *.pyc
 .venv/
+venv/
 .env
 .env.*
 !.env.example
+config.yaml
+!config.yaml.example
+agentloop.toml
+!agentloop.toml.example
 node_modules/
 dist/
 build/

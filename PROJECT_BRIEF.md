@@ -1,165 +1,266 @@
-# Kitobxon — Book Reading & Audio Listening Platform
+# Alisa — Raspberry Pi Local AI Assistant
 
 ## Goal
 
-Kitob o'qish va audiokitob eshitish uchun mobil ilova backend tizimini ishlab chiqish. Foydalanuvchilar kitoblarni o'qishi, audiolarni tinglashi, progress saqlashi va kutubxonasini boshqarishi mumkin. Backend FastAPI da quriladi, bepul storage xizmatlaridan foydalaniladi.
+Raspberry Pi 4/5 da ishlaydigan o'zbekcha AI assistant. Alisa ovoz bilan gaplashadi, savolarga javob beradi, resepsiya sifatida ishlaydi, va Telegram orqali boshqariladi. Gibrid arxitektura: internet bo'lsa online LLM, bo'lmasa local LLM. Hech qachon qotib qolmaydi.
+
+## Til: O'zbekcha
+
+Alisa FAQAT o'zbekcha gaplashadi. System prompt o'zbekcha. Javoblar o'zbekcha. Foydalanuvchi boshqa tilda yozsa ham o'zbekcha javob beradi.
+
+## Core Architecture: Gibrid Multi-LLM
+
+### Fallback Chain (prioritet bo'yicha)
+
+```
+Savol keldi → LLM Manager (oxirgi ishlagan providerdan boshlaydi)
+    │
+    ├─ 1. GPT-4o-mini (OpenAI) ─── API key bor → 2-3s javob
+    │
+    ├─ 2. Gemini (Google) ─── GPT ishlamasa → 2-3s
+    │
+    ├─ 3. DeepSeek ─── timeout 5s → keyingisi
+    │
+    ├─ 4. Grok (xAI) ─── timeout 5s → keyingisi
+    │
+    ├─ 5. Claude (Anthropic) ─── timeout 5s → keyingisi
+    │
+    └─ 6. Local LLM (Ollama) ─── OFFLINE, har doim ishlaydi, 3-5s
+            qwen2.5:3b
+
+API key yo'q = skip (0s kutmaydi)
+Ishlagan provider eslab qolinadi = keyingi safar undan boshlaydi
+Real javob vaqti: 2-3 sekund (odatda birinchi providerda ishlaydi)
+```
+
+### LLM Manager qoidalari:
+- Har bir provider uchun API key config.yaml da saqlanadi
+- API key yo'q provider skip qilinadi (0s — umuman chaqirmaydi)
+- Timeout: 5s (online), 10s (local)
+- Timeout bo'lsa keyingisiga o'tadi (HECH QACHON qotib qolmaydi)
+- Oxirgi muvaffaqiyatli provider eslab qolinadi — keyingi safar SHU DAN boshlaydi
+- Barcha providerlar bir xil interface: `async def generate(prompt, system) -> str`
+- Rate limit/quota tugasa keyingisiga o'tadi
+- Local LLM har doim oxirgi fallback (internet kerak emas)
+- Real javob vaqti: 2-3s (chunki ishlagan providerdan boshlaydi)
 
 ## Core Features
 
-### 1. Foydalanuvchi tizimi (Auth)
-- Ro'yxatdan o'tish (email + parol)
-- Login / Logout
-- JWT token bilan autentifikatsiya
-- Profil ko'rish va tahrirlash
+### 1. Ovozli suhbat (Voice Conversation)
+- Wake word: "Alisa" (openWakeWord yoki energy-gated)
+- STT: whisper.cpp (local, ARM optimized)
+- LLM: Gibrid (yuqoridagi fallback chain)
+- TTS: Piper TTS (local, o'zbek/rus ovoz)
+- Javob vaqti: < 3 sekund (local), < 5 sekund (online)
+- Qotib qolmaslik: har bir bosqichda timeout, skip, fallback
 
-### 2. Kitoblar boshqaruvi
-- Kitoblar ro'yxati (CRUD)
-- Kitob qo'shish (sarlavha, muallif, tavsif, janr, muqova rasmi, fayl)
-- Kitob qidirish va filtrlash (janr, muallif, sarlavha bo'yicha)
-- Kitob sahifalarini ko'rish (pagination)
-- O'qish progressini saqlash (qaysi sahifada to'xtagan)
+### 2. Telegram Bot
+- /ask [savol] — savol yuborish, javob olish
+- /status — CPU, RAM, harorat, qaysi LLM ishlatilmoqda
+- /mode [reception|assistant] — rejim almashtirish
+- /providers — qaysi LLM lar faol, qaysilari o'chiq
+- /restart — Alisa ni qayta ishga tushirish
+- /update — git pull + restart
+- Ovozli xabar → STT → LLM → matnli javob
 
-### 3. Audiokitoblar
-- Audio fayl yuklash va stream qilish
-- Audio progressini saqlash (qaysi sekundda to'xtagan)
-- Audio metadata (davomiyligi, format, bitrate)
+### 3. Resepsiya rejimi
+- Mehmonni salomlash (o'zbekcha)
+- FAQ javoblar (ish vaqti, manzil, kim bilan uchrashish)
+- Telegram ga "Mehmon keldi" xabari
+- Oddiy savollar uchun LLM shart emas (knowledge base)
 
-### 4. Kutubxona
-- Foydalanuvchi shaxsiy kutubxonasi
-- Kitoblarni sevimlilar ro'yxatiga qo'shish
-- O'qilgan / o'qilmoqda / o'qilmagan statuslar
-- Oxirgi faoliyat tarixi
-
-### 5. Kategoriyalar va teglar
-- Kitob janrlari (badiiy, ilmiy, tarixiy, texnik va h.k.)
-- Teglar tizimi
-- Kategoriya bo'yicha filtrlash
+### 4. Online xususiyatlar (internet mavjud bo'lganda)
+- Ob-havo (OpenWeatherMap)
+- Yangiliklar
+- OTA update (git pull)
+- Online LLM (fallback chain)
 
 ## Tech Stack
 
-- **Backend**: Python 3.11+, FastAPI
-- **Database**: SQLite (development), PostgreSQL (production-ready schema)
-- **ORM**: SQLAlchemy 2.0 + Alembic (migrations)
-- **Auth**: JWT (python-jose + passlib)
-- **Storage**: Supabase Storage (bepul tier — 1GB) yoki lokal fayl tizimi (fallback)
-- **Audio streaming**: FastAPI StreamingResponse
-- **API docs**: Swagger/OpenAPI (FastAPI avtomatik)
-- **Testing**: pytest + httpx (async test client)
-- **Validation**: Pydantic v2
+### Hardware
+- Raspberry Pi 4 (4GB) yoki Pi 5
+- USB mikrofon
+- Speaker (3.5mm yoki USB)
+- MicroSD 64GB+
+
+### Software — AI
+- **STT**: whisper.cpp (ARM64 optimized, tiny/base model)
+- **LLM Online**: OpenAI, Gemini, DeepSeek, Grok, Claude (fallback chain)
+- **LLM Local**: Ollama + qwen2.5:3b (offline fallback)
+- **TTS**: Piper TTS (local)
+- **Wake word**: openWakeWord (yoki energy-gated fallback)
+
+### Software — Backend
+- Python 3.11+
+- asyncio + aiohttp
+- python-telegram-bot (async)
+- PyAudio / sounddevice
+- systemd service
+- YAML config
+- structlog
 
 ## Project Structure
 
 ```
-backend/
-  app/
-    main.py              # FastAPI app entry point
-    config.py            # Settings (env-based)
-    database.py          # DB connection & session
-    models/              # SQLAlchemy models
-      user.py
-      book.py
-      audio.py
-      category.py
-      library.py
-    schemas/             # Pydantic schemas
-      user.py
-      book.py
-      audio.py
-      library.py
-    routers/             # API endpoints
-      auth.py
-      books.py
-      audio.py
-      library.py
-      categories.py
-    services/            # Business logic
-      auth_service.py
-      book_service.py
-      audio_service.py
-      storage_service.py
-    storage/             # Storage backends
-      base.py            # Abstract interface
-      local.py           # Local filesystem
-      supabase.py        # Supabase Storage
-    middleware/
-      auth.py            # JWT middleware
-    utils/
-      security.py        # Password hashing, JWT
-  alembic/               # DB migrations
+alisa/
+  core/
+    assistant.py         # Asosiy loop: listen → think → speak
+    config.py            # YAML config loader
+  voice/
+    stt.py               # whisper.cpp wrapper
+    tts.py               # Piper TTS wrapper
+    wake_word.py         # Wake word detection
+    audio_io.py          # Mikrofon/speaker
+  brain/
+    llm_manager.py       # Multi-LLM fallback chain (ASOSIY)
+    providers/
+      base.py            # Abstract LLM provider interface
+      openai.py          # GPT-4o-mini
+      gemini.py          # Google Gemini
+      deepseek.py        # DeepSeek
+      grok.py            # xAI Grok
+      claude.py          # Anthropic Claude
+      ollama.py          # Local Ollama (offline)
+    memory.py            # Conversation history
+    online.py            # Weather, news
+  telegram/
+    bot.py               # Telegram bot
+    commands.py          # /ask, /status, /providers, /mode
+  reception/
+    greeter.py           # Mehmon salomlash
+    knowledge.py         # FAQ bazasi
+  services/
+    health.py            # System monitoring
+    updater.py           # OTA update
+    scheduler.py         # Vaqtli vazifalar
   tests/
-    conftest.py
-    test_auth.py
-    test_books.py
-    test_audio.py
-    test_library.py
-  requirements.txt
-  .env.example
+    test_llm_manager.py
+    test_providers.py
+    test_stt.py
+    test_tts.py
+    test_telegram.py
+    test_assistant.py
+  config.yaml            # API keys, sozlamalar
+  setup/
+    install.sh           # Pi ga o'rnatish
+    systemd/alisa.service
 ```
 
-## API Endpoints
+## config.yaml namunasi
 
-### Auth
-- `POST /api/auth/register` — Ro'yxatdan o'tish
-- `POST /api/auth/login` — Kirish (JWT qaytaradi)
-- `GET /api/auth/me` — Joriy foydalanuvchi
-- `PUT /api/auth/profile` — Profilni yangilash
+```yaml
+language: uz
+wake_word: "alisa"
 
-### Books
-- `GET /api/books` — Kitoblar ro'yxati (pagination, filter, search)
-- `GET /api/books/{id}` — Bitta kitob
-- `POST /api/books` — Kitob qo'shish (admin)
-- `PUT /api/books/{id}` — Kitobni tahrirlash
-- `DELETE /api/books/{id}` — Kitobni o'chirish
-- `POST /api/books/{id}/cover` — Muqova rasm yuklash
-- `POST /api/books/{id}/file` — Kitob faylini yuklash (PDF/EPUB)
-- `GET /api/books/{id}/read` — Kitobni o'qish (stream)
+llm:
+  timeout_sec: 5
+  local_timeout_sec: 10
+  providers:
+    - name: openai
+      api_key: ""  # bo'sh = skip
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+    - name: gemini
+      api_key: ""
+      model: gemini-2.0-flash
+    - name: deepseek
+      api_key: ""
+      model: deepseek-chat
+      base_url: https://api.deepseek.com/v1
+    - name: grok
+      api_key: ""
+      model: grok-2
+      base_url: https://api.x.ai/v1
+    - name: claude
+      api_key: ""
+      model: claude-sonnet-4-20250514
+    - name: ollama
+      model: qwen2.5:3b
+      base_url: http://localhost:11434
 
-### Audio
-- `POST /api/books/{id}/audio` — Audio fayl yuklash
-- `GET /api/books/{id}/audio/stream` — Audio stream
-- `PUT /api/books/{id}/audio/progress` — Audio progressini saqlash
-- `GET /api/books/{id}/audio/progress` — Audio progressini olish
+stt:
+  model: tiny
+  language: uz
 
-### Library
-- `GET /api/library` — Mening kutubxonam
-- `POST /api/library/{book_id}` — Kutubxonaga qo'shish
-- `DELETE /api/library/{book_id}` — Kutubxonadan o'chirish
-- `PUT /api/library/{book_id}/status` — Statusni yangilash
-- `PUT /api/library/{book_id}/progress` — O'qish progressini saqlash
-- `GET /api/library/favorites` — Sevimlilar
+tts:
+  model: uz_UZ-doniyorbek-medium
+  speed: 1.0
 
-### Categories
-- `GET /api/categories` — Kategoriyalar ro'yxati
-- `POST /api/categories` — Kategoriya qo'shish
-- `GET /api/categories/{id}/books` — Kategoriya bo'yicha kitoblar
+telegram:
+  bot_token: ""
+  chat_id: ""
+
+reception:
+  greeting: "Assalomu alaykum! Sizga qanday yordam bera olaman?"
+  work_hours: "9:00 - 18:00"
+  address: ""
+```
+
+## System Prompt (O'zbekcha)
+
+```
+Sen Alisa — aqlli yordamchi. Sen faqat o'zbek tilida gaplashasan.
+Javoblaring qisqa, aniq va foydali bo'lsin.
+Agar bilmasang, "Bilmayman, lekin izlab ko'raman" de.
+Sen Raspberry Pi da ishlaysan, resepsiyada mehmonlarni kutib olasan.
+```
 
 ## Constraints
 
-- Barcha API endpointlar async bo'lishi kerak
-- JWT token muddati 24 soat
-- Fayl yuklash limiti: 50MB (kitob), 200MB (audio)
-- Pagination: default 20, max 100
-- Storage: avval lokal, keyin Supabase ga o'tish oson bo'lishi kerak (abstraction layer)
-- Parollar bcrypt bilan hash qilinishi kerak
-- CORS middleware sozlangan bo'lishi kerak
-- Health check endpoint bo'lishi kerak: `GET /api/health`
+- RAM: < 3GB (OS + Alisa + local model)
+- Javob vaqti: < 3s (local), < 5s (online)
+- HECH QACHON qotib qolmasligi kerak (timeout + fallback)
+- API key yo'q provider avtomatik skip
+- Barcha xatolar graceful handle qilinadi
+- SD card yemirilishini kamaytirish
 
 ## Acceptance Criteria
 
-- [ ] `pytest` barcha testlar o'tishi kerak
-- [ ] `uvicorn app.main:app` bilan server ishga tushishi kerak
-- [ ] `/docs` sahifasida Swagger UI ko'rinishi kerak
-- [ ] Foydalanuvchi ro'yxatdan o'tib, login qilib, kitob qo'sha olishi kerak
-- [ ] Kitob faylini yuklab, stream qilib o'qiy olishi kerak
-- [ ] Audio faylini yuklab, stream qilib eshita olishi kerak
-- [ ] Kutubxonaga kitob qo'shib, status va progressini boshqara olishi kerak
-- [ ] Storage abstraction layer orqali lokal va Supabase storage ishlay olishi kerak
+- [ ] Wake word "Alisa" ishlaydi
+- [ ] Ovozli savol → o'zbekcha javob < 5 sek
+- [ ] Internet yo'q bo'lsa local LLM ishlaydi
+- [ ] Internet bor bo'lsa online LLM ishlatadi
+- [ ] Bitta provider ishlamasa keyingisiga o'tadi (fallback)
+- [ ] Telegram /ask ishlaydi
+- [ ] Telegram /status — qaysi provider ishlatilmoqda ko'rsatadi
+- [ ] Telegram /providers — barcha providerlar holati
+- [ ] Resepsiya rejimi ishlaydi
+- [ ] pytest barcha testlar o'tadi
+- [ ] systemd service sifatida 24/7 ishlaydi
+- [ ] config.yaml dan API keylar o'qiladi
+
+## Development Phases
+
+### Phase 1: LLM Manager + Fallback Chain
+- providers/ papkasi — har bir LLM uchun adapter
+- llm_manager.py — fallback logic, timeout, retry
+- config.yaml dan providerlarni o'qish
+- Test: mock providerlar bilan fallback ishlashini tekshirish
+
+### Phase 2: Voice Pipeline
+- whisper.cpp STT
+- Piper TTS
+- Wake word
+- assistant.py loop
+
+### Phase 3: Telegram Bot
+- /ask, /status, /providers, /mode
+- Ovozli xabar qabul qilish
+
+### Phase 4: Reception + Online
+- Mehmon salomlash
+- FAQ knowledge base
+- Ob-havo, yangiliklar
+
+### Phase 5: Deployment
+- install.sh
+- systemd service
+- OTA update
 
 ## Non-Goals
 
-- Frontend / mobil ilova (faqat backend API)
-- Real-time xususiyatlar (WebSocket, chat)
-- To'lov tizimi
-- Admin panel UI
-- Email xabarnomalari
-- Social login (Google, Facebook)
+- Web UI
+- Video/kamera
+- Smart home
+- Ko'p foydalanuvchi
+- O'z modelini train qilish
