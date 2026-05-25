@@ -113,6 +113,12 @@ web_dashboard:
 logging:
   level: INFO
 
+# Legacy compatibility
+ollama:
+  url: http://localhost:11434
+  model: qwen2.5:3b
+  timeout: 30
+
 updater:
   git_branch: null
   pip_path: /opt/alisa/venv/bin/pip

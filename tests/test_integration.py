@@ -63,8 +63,8 @@ class TestIntegration:
         with patch('alisa.brain.llm_manager.get_config', return_value=mock_config):
             assistant = AlisaAssistant()
             
-            # Should fall back to "no providers" message
-            result = await assistant._think("Salom")
+            # Should fall back to intent detection or "no providers" message
+            result = await assistant._think("Kvant fizikasi nima")
             
             assert result is not None
             assert isinstance(result, str)

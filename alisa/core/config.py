@@ -75,7 +75,16 @@ _DEFAULTS = {
         "keyword": "alisa",
         "sensitivity": 0.05,
         "confirmation_cooldown_sec": 5.0,
-        "allow_proxy_model": False,  # Prefer energy-gated when keyword='alisa' and model='alexa'
+        "method": "auto",
+        "allow_proxy_model": False,
+        "openwakeword": {
+            "model": "alexa",
+            "inference_framework": "onnx",
+        },
+        "energy_gated": {
+            "threshold": 500,
+            "min_duration_ms": 100,
+        },
     },
     "telegram": {
         "bot_token": None,
@@ -92,7 +101,17 @@ _DEFAULTS = {
     },
     "updater": {
         "pip_path": "/opt/alisa/venv/bin/pip",
-        "git_branch": None,  # Auto-detect current branch
+        "git_branch": None,
+    },
+    "scheduler": {
+        "enabled": True,
+    },
+    "web_dashboard": {
+        "enabled": True,
+        "port": 8080,
+    },
+    "logging": {
+        "level": "INFO",
     },
     "openai": {
         "api_key": None,

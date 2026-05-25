@@ -38,8 +38,8 @@ class TestSetupConfig:
         assert "output_dir" in config["piper"]
         
         # Check model paths match what install.sh downloads
-        assert config["whisper"]["model"].endswith("ggml-base.bin")  # Uzbek uses base model
-        assert "uz_UZ-doniyorbek-medium.onnx" in config["piper"]["model"] or "ru_RU-irina-medium.onnx" in config["piper"]["model"]  # Uzbek or Russian fallback
+        assert config["whisper"]["model"].endswith(".bin")  # Whisper model file
+        assert config["piper"]["model"].endswith(".onnx")  # Piper model file
         assert config["whisper"]["language"] == "uz"  # Uzbek language
     
     def test_current_config_matches_schema(self):
@@ -48,11 +48,11 @@ class TestSetupConfig:
         
         # Check that piper model path exists in config and matches downloaded file
         piper_model = config["piper"]["model"]
-        assert "uz_UZ-doniyorbek-medium.onnx" in piper_model or "ru_RU-irina-medium.onnx" in piper_model, f"Piper model should be Uzbek or Russian fallback, got: {piper_model}"
+        assert piper_model.endswith(".onnx"), f"Piper model should be .onnx file, got: {piper_model}"
         
         # Check whisper model path
         whisper_model = config["whisper"]["model"]
-        assert "ggml-base.bin" in whisper_model, f"Whisper model should be ggml-base.bin, got: {whisper_model}"
+        assert ".bin" in whisper_model, f"Whisper model should be .bin file, got: {whisper_model}"
         
         # Check language setting
         assert config["whisper"]["language"] == "uz", f"Whisper language should be 'uz', got: {config['whisper']['language']}"

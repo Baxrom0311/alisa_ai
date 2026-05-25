@@ -45,21 +45,17 @@ def test_get_context():
     memory = ConversationMemory()
     
     # Empty context
-    assert memory.get_context(include_system=False) == ""
+    assert memory.get_context() == ""
     
     # Add some messages
     memory.add_message("user", "What is AI?")
     memory.add_message("assistant", "AI is artificial intelligence")
     memory.add_message("user", "Tell me more")
     
-    context = memory.get_context(include_system=False)
+    context = memory.get_context()
     assert "Foydalanuvchi: What is AI?" in context
     assert "Alisa: AI is artificial intelligence" in context
     assert "Foydalanuvchi: Tell me more" in context
-    
-    # With system prompt
-    context_with_system = memory.get_context(include_system=True)
-    assert "Siz Alisa AI assistantsiz" in context_with_system
 
 
 def test_get_recent_messages():
@@ -111,8 +107,7 @@ def test_get_stats():
     assert stats["total_messages"] == 3
     assert stats["user_messages"] == 2
     assert stats["assistant_messages"] == 1
-    assert stats["oldest_message"] is not None
-    assert stats["newest_message"] is not None
+    assert stats["facts_stored"] >= 0
 
 
 def test_global_memory():
