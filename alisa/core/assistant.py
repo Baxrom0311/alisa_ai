@@ -11,6 +11,8 @@ from alisa.voice.wake_word import detect_wake_word
 from alisa.voice.audio_io import async_record_audio, async_play_audio, record_audio, play_audio, async_record_until_silence
 from alisa.voice.stt import transcribe
 from alisa.voice.tts import synthesize
+from alisa.voice.audio_preprocessing import preprocess_audio
+from alisa.voice.streaming_pipeline import StreamingPipeline
 from alisa.brain.llm_manager import LLMManager
 from alisa.brain.memory import get_memory
 from alisa.brain.online import async_handle_special_queries, async_is_online
@@ -51,6 +53,7 @@ class AlisaAssistant:
         self.recovery_manager = get_recovery_manager()
         self.performance_monitor = get_performance_monitor()
         self.llm_manager = LLMManager()
+        self.streaming_pipeline = StreamingPipeline()
         
         init_time = time.time() - start_time
         logger.info("assistant_initialized", init_time_ms=int(init_time * 1000), 
