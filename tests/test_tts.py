@@ -58,7 +58,7 @@ def test_synthesize_uses_mms_first(mock_mms):
     result = synthesize("Salom")
 
     assert result == "/tmp/alisa_tts/test.wav"
-    mock_mms.assert_called_once_with("Salom")
+    mock_mms.assert_called_once_with("Salom", "uz")
 
 
 def test_unload_model():
@@ -66,4 +66,4 @@ def test_unload_model():
     from alisa.voice.tts import unload_model
     unload_model()
     from alisa.voice import tts
-    assert tts._mms_model is None
+    assert tts._mms_models == {}

@@ -16,52 +16,47 @@ import structlog
 logger = structlog.get_logger()
 
 
-# Intent patterns — regex bilan aniqlash
+# Intent patterns — regex bilan aniqlash (uz + ru + en)
 INTENT_PATTERNS = {
     "time": [
-        r"soat\s*nech(a|i)",
-        r"hozir\s*soat",
-        r"vaqt\s*(qancha|necha)",
-        r"soat\s*ko'rsat",
+        r"soat\s*nech(a|i)", r"hozir\s*soat", r"vaqt",
+        r"который\s*час", r"сколько\s*времени", r"время",
+        r"what\s*time", r"current\s*time",
     ],
     "date": [
-        r"bugun\s*qaysi\s*kun",
-        r"bugun\s*nech(a|i)",
-        r"sana\s*(qanday|nima)",
-        r"hafta\s*kuni",
+        r"bugun\s*qaysi\s*kun", r"bugun\s*nech(a|i)", r"sana",
+        r"какой\s*сегодня\s*день", r"какое\s*число", r"сегодня",
+        r"what\s*day", r"today'?s?\s*date",
     ],
     "greeting": [
-        r"^salom",
-        r"^assalom",
-        r"^hey\s*alisa",
-        r"^yaxshimisiz",
-        r"^qalaysiz",
+        r"^salom", r"^assalom", r"^hey\s*alisa", r"^yaxshimisiz",
+        r"^привет", r"^здравствуй", r"^добр",
+        r"^hello", r"^hi\s", r"^hey\s", r"^good\s*(morning|evening|afternoon)",
     ],
     "thanks": [
-        r"rahmat",
-        r"raxmat",
-        r"tashakkur",
-        r"sag\s*bo'l",
+        r"rahmat", r"raxmat", r"tashakkur",
+        r"спасибо", r"благодар",
+        r"thank", r"thanks",
     ],
     "stop": [
-        r"^to'xta",
-        r"^bas",
-        r"^yetadi",
-        r"^jim\s*bo'l",
+        r"^to'xta", r"^bas", r"^yetadi",
+        r"^стоп", r"^хватит", r"^замолчи",
+        r"^stop", r"^enough", r"^shut\s*up",
     ],
     "volume_up": [
         r"ovoz(ni)?\s*(ko'tar|baland|oshir)",
-        r"balandroq",
+        r"громче", r"погромче",
+        r"louder", r"volume\s*up",
     ],
     "volume_down": [
         r"ovoz(ni)?\s*(pasayt|past|kamayt)",
-        r"pastroq",
-        r"sekinroq",
+        r"тише", r"потише",
+        r"quieter", r"volume\s*down",
     ],
     "repeat": [
-        r"qaytala",
-        r"yana\s*ayt",
-        r"nima\s*deding",
+        r"qaytala", r"yana\s*ayt",
+        r"повтори", r"ещё\s*раз",
+        r"repeat", r"say\s*(it\s*)?again",
     ],
 }
 
@@ -94,7 +89,8 @@ def detect_intent(text: str) -> Optional[Tuple[str, str]]:
 
 
 def _handle_intent(intent: str) -> Optional[str]:
-    """Generate response for detected intent."""
+    """Generate response for detected intent (auto-detects language from context)."""
+    from alisa.core.language import detect_language
     now = datetime.now()
 
     if intent == "time":
@@ -121,10 +117,10 @@ def _handle_intent(intent: str) -> Optional[str]:
         return "Arzimaydi! Yana yordam kerak bo'lsa, ayting."
 
     elif intent == "stop":
-        return None  # Signal to stop speaking
+        return None
 
     elif intent == "repeat":
-        return None  # Handled by assistant (replay last response)
+        return None
 
     elif intent == "volume_up":
         return "Ovoz balandligi oshirildi."

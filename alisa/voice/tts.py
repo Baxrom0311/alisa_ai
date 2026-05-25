@@ -18,8 +18,7 @@ from alisa.core.config import get_config
 logger = structlog.get_logger()
 
 # Try to import MMS-TTS dependencies
-_mms_model = None
-_mms_tokenizer = None
+_mms_models = {}  # Cache: model_id → (model, tokenizer)
 _mms_available = False
 
 try:
@@ -32,29 +31,39 @@ except ImportError:
 
 
 def _get_mms_model():
-    """Load Facebook MMS-TTS Uzbek model (singleton)."""
-    global _mms_model, _mms_tokenizer
-    if _mms_model is not None:
-        return _mms_model, _mms_tokenizer
-
+    """Load default MMS-TTS model."""
     cfg = get_config().get("tts", {})
     model_id = cfg.get("mms_model", "facebook/mms-tts-uzb-script_latin")
+    return _get_mms_model_for_lang(model_id)
+
+
+def _get_mms_model_for_lang(model_id: str):
+    """Load MMS-TTS model for specific language (cached)."""
+    global _mms_models
+    if model_id in _mms_models:
+        return _mms_models[model_id]
 
     logger.info("loading_mms_tts", model=model_id)
-    _mms_tokenizer = AutoTokenizer.from_pretrained(model_id)
-    _mms_model = VitsModel.from_pretrained(model_id)
+    tokenizer = AutoTokenizer.from_pretrained(model_id)
+    model = VitsModel.from_pretrained(model_id)
+    _mms_models[model_id] = (model, tokenizer)
     logger.info("mms_tts_loaded", model=model_id)
-    return _mms_model, _mms_tokenizer
+    return model, tokenizer
 
 
-def synthesize(text: str) -> Optional[str]:
-    """Synthesize text to WAV file. Returns WAV path or None."""
+def synthesize(text: str, lang: str = "uz") -> Optional[str]:
+    """Synthesize text to WAV file. Returns WAV path or None.
+    
+    Args:
+        text: Text to synthesize
+        lang: Language code ('uz', 'ru', 'en')
+    """
     if not text or not text.strip():
         return None
 
-    # Try MMS-TTS first (real Uzbek voice)
+    # Try MMS-TTS first (real multilingual voice)
     if _mms_available:
-        result = _synthesize_mms(text)
+        result = _synthesize_mms(text, lang)
         if result:
             return result
 
@@ -63,18 +72,22 @@ def synthesize(text: str) -> Optional[str]:
     if result:
         return result
 
-    # espeak-ng fallback
-    return _synthesize_espeak(text)
+    # espeak-ng fallback (supports uz, ru, en)
+    return _synthesize_espeak(text, lang)
 
 
-def _synthesize_mms(text: str) -> Optional[str]:
-    """Synthesize using Facebook MMS-TTS Uzbek."""
+def _synthesize_mms(text: str, lang: str = "uz") -> Optional[str]:
+    """Synthesize using Facebook MMS-TTS (multilingual)."""
     try:
         import torch
         import numpy as np
         import wave
 
-        model, tokenizer = _get_mms_model()
+        from alisa.core.language import get_tts_config
+        tts_cfg = get_tts_config(lang)
+        model_id = tts_cfg["mms_model"]
+
+        model, tokenizer = _get_mms_model_for_lang(model_id)
 
         inputs = tokenizer(text, return_tensors="pt")
         with torch.no_grad():
@@ -131,8 +144,8 @@ def _synthesize_piper(text: str) -> Optional[str]:
     return None
 
 
-def _synthesize_espeak(text: str) -> Optional[str]:
-    """Synthesize using espeak-ng (supports Uzbek natively)."""
+def _synthesize_espeak(text: str, lang: str = "uz") -> Optional[str]:
+    """Synthesize using espeak-ng (supports uz, ru, en natively)."""
     output_dir = Path("/tmp/alisa_tts")
     output_dir.mkdir(parents=True, exist_ok=True)
     out_file = tempfile.NamedTemporaryFile(suffix=".wav", dir=str(output_dir), delete=False)
@@ -141,10 +154,11 @@ def _synthesize_espeak(text: str) -> Optional[str]:
 
     cfg = get_config().get("tts", {})
     speed = cfg.get("espeak_speed", 140)
+    voice = {"uz": "uz", "ru": "ru", "en": "en"}.get(lang, "uz")
 
     try:
         result = subprocess.run(
-            ["espeak-ng", "-v", "uz", "-s", str(speed), "-w", out_path, text],
+            ["espeak-ng", "-v", voice, "-s", str(speed), "-w", out_path, text],
             capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0 and Path(out_path).stat().st_size > 100:
@@ -158,10 +172,7 @@ def _synthesize_espeak(text: str) -> Optional[str]:
 
 
 def unload_model():
-    """Unload TTS model to free memory."""
-    global _mms_model, _mms_tokenizer
-    if _mms_model is not None:
-        del _mms_model, _mms_tokenizer
-        _mms_model = None
-        _mms_tokenizer = None
-        logger.info("mms_tts_model_unloaded")
+    """Unload TTS models to free memory."""
+    global _mms_models
+    _mms_models.clear()
+    logger.info("mms_tts_models_unloaded")

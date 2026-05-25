@@ -73,7 +73,7 @@ def transcribe(wav_bytes: bytes) -> str:
 def _transcribe_faster_whisper(wav_bytes: bytes) -> str:
     """Transcribe using faster-whisper with Uzbek fine-tuned model."""
     cfg = get_config().get("stt", {})
-    language = cfg.get("language", "uz")
+    language = cfg.get("language", None)  # None = auto-detect
 
     temp_dir = "/dev/shm" if os.path.exists("/dev/shm") else None
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False, dir=temp_dir)
@@ -85,7 +85,7 @@ def _transcribe_faster_whisper(wav_bytes: bytes) -> str:
 
         segments, info = model.transcribe(
             tmp.name,
-            language=language,
+            language=language,  # None = auto-detect uz/ru/en
             beam_size=cfg.get("beam_size", 3),
             best_of=cfg.get("best_of", 3),
             temperature=cfg.get("temperature", 0.0),

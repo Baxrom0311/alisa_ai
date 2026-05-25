@@ -7,6 +7,7 @@ import structlog
 
 from alisa.core.config import get_config
 from alisa.core.memory_manager import get_memory_manager
+from alisa.core.language import detect_language, get_system_prompt
 from alisa.voice.wake_word import detect_wake_word
 from alisa.voice.audio_io import async_record_audio, async_play_audio, record_audio, play_audio, async_record_until_silence
 from alisa.voice.stt import transcribe
@@ -77,29 +78,41 @@ class AlisaAssistant:
         self.is_running = False
         
     async def _think(self, text: str) -> str:
-        """Shared thinking logic: memory + LLM generation."""
-        # Check for special online queries first (weather, news)
+        """Shared thinking logic: intent detection → memory → LLM generation."""
+        # 0. Intent detection — tez buyruqlar LLM siz
+        from alisa.brain.intent_detector import detect_intent
+        intent_result = detect_intent(text)
+        if intent_result:
+            _, response = intent_result
+            self.memory.add_message("user", text)
+            self.memory.add_message("assistant", response)
+            return response
+
+        # 1. Detect language for appropriate response
+        lang = detect_language(text)
+        system_prompt = get_system_prompt(lang)
+
+        # 2. Check for special online queries first (weather, news)
         if await async_is_online():
             special_response = await async_handle_special_queries(text)
             if special_response:
-                # Add to memory for context
                 self.memory.add_message("user", text)
                 self.memory.add_message("assistant", special_response)
                 return special_response
         
-        # Add user message to memory
+        # 3. Add user message to memory
         self.memory.add_message("user", text)
         
-        # Get context for better responses
+        # 4. Get context for better responses
         context = self.memory.get_context()
         
-        # Generate response with context using fallback chain
+        # 5. Generate response with context using fallback chain
         if context:
             prompt = f"{context}\nFoydalanuvchi: {text}"
         else:
             prompt = text
         
-        response = await self.llm_manager.generate(prompt, system_prompt=ALISA_SYSTEM_PROMPT_UZ)
+        response = await self.llm_manager.generate(prompt, system_prompt=system_prompt)
         
         # Add assistant response to memory
         self.memory.add_message("assistant", response)
