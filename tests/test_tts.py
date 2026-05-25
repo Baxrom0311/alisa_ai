@@ -1,6 +1,7 @@
-"""Tests for alisa.voice.tts module."""
+"""Tests for alisa.voice.tts module (MMS-TTS + fallbacks)."""
 
 from unittest.mock import patch, MagicMock
+from pathlib import Path
 
 from alisa.core.config import reset_config
 
@@ -13,43 +14,56 @@ def test_synthesize_empty_text():
     assert synthesize("   ") is None
 
 
+@patch("alisa.voice.tts._mms_available", False)
+@patch("alisa.voice.tts._synthesize_piper", return_value=None)
 @patch("alisa.voice.tts.subprocess.run")
-def test_synthesize_success(mock_run):
-    """synthesize returns WAV path on success."""
+def test_synthesize_espeak_fallback(mock_run, mock_piper):
+    """Falls back to espeak-ng when MMS and Piper unavailable."""
     reset_config()
-    mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+    def side_effect(cmd, **kwargs):
+        if "espeak-ng" in cmd:
+            out_path = cmd[cmd.index("-w") + 1]
+            Path(out_path).write_bytes(b"RIFF" + b"\x00" * 200)
+            return MagicMock(returncode=0)
+        return MagicMock(returncode=1)
+
+    mock_run.side_effect = side_effect
 
     from alisa.voice.tts import synthesize
     result = synthesize("Salom")
 
     assert result is not None
-    assert result.endswith(".wav")
-    assert "/tmp/alisa_tts/" in result
-    # Verify piper command
-    cmd = mock_run.call_args[0][0]
-    assert cmd[0] == "/usr/local/bin/piper"
-    assert "--model" in cmd
+    Path(result).unlink(missing_ok=True)
 
 
-@patch("alisa.voice.tts.subprocess.run")
-def test_synthesize_failure(mock_run):
-    """synthesize returns None on piper failure."""
+@patch("alisa.voice.tts._mms_available", False)
+@patch("alisa.voice.tts._synthesize_piper", return_value=None)
+@patch("alisa.voice.tts._synthesize_espeak", return_value=None)
+def test_synthesize_all_fail(mock_espeak, mock_piper):
+    """Returns None when all engines fail."""
     reset_config()
-    mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="err")
+    from alisa.voice.tts import synthesize
+    assert synthesize("Salom") is None
+
+
+@patch("alisa.voice.tts._mms_available", True)
+@patch("alisa.voice.tts._synthesize_mms")
+def test_synthesize_uses_mms_first(mock_mms):
+    """MMS-TTS is tried first when available."""
+    reset_config()
+    mock_mms.return_value = "/tmp/alisa_tts/test.wav"
 
     from alisa.voice.tts import synthesize
     result = synthesize("Salom")
 
-    assert result is None
+    assert result == "/tmp/alisa_tts/test.wav"
+    mock_mms.assert_called_once_with("Salom")
 
 
-@patch("alisa.voice.tts.subprocess.run")
-def test_synthesize_binary_not_found(mock_run):
-    """synthesize handles missing binary."""
-    reset_config()
-    mock_run.side_effect = FileNotFoundError()
-
-    from alisa.voice.tts import synthesize
-    result = synthesize("Salom")
-
-    assert result is None
+def test_unload_model():
+    """unload_model clears global state."""
+    from alisa.voice.tts import unload_model
+    unload_model()
+    from alisa.voice import tts
+    assert tts._mms_model is None

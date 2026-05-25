@@ -9,6 +9,7 @@ known limitation that will be addressed in future versions.
 """
 
 import asyncio
+import os
 import struct
 import time
 import wave
@@ -100,22 +101,29 @@ class WakeWordDetector:
         
     def _init_openwakeword(self):
         """Initialize openWakeWord model with explicit configuration."""
-        # Use configured model and framework
-        self.oww_model = Model(
-            wakeword_models=[self.oww_model_name], 
-            inference_framework=self.oww_framework
-        )
+        model_path = self.oww_model_name
         
-        # Always warn about model proxy usage for transparency
-        if self.oww_model_name != self.keyword:
-            logger.warning("wake_word_model_proxy", 
-                          configured_keyword=self.keyword,
-                          oww_model=self.oww_model_name,
-                          framework=self.oww_framework,
-                          message=f"Using '{self.oww_model_name}' model as phonetic proxy for '{self.keyword}'")
+        # Check if it's a file path (custom trained model)
+        if os.path.isfile(model_path):
+            self.oww_model = Model(
+                wakeword_models=[model_path],
+                inference_framework=self.oww_framework
+            )
+            logger.info("openwakeword_custom_model_loaded", path=model_path)
+        else:
+            # Use built-in model name
+            self.oww_model = Model(
+                wakeword_models=[model_path],
+                inference_framework=self.oww_framework
+            )
+            if model_path != self.keyword:
+                logger.warning("wake_word_model_proxy",
+                              configured_keyword=self.keyword,
+                              oww_model=model_path,
+                              message=f"Using '{model_path}' as proxy for '{self.keyword}'")
         
-        logger.info("openwakeword_initialized", 
-                   model=self.oww_model_name, 
+        logger.info("openwakeword_initialized",
+                   model=model_path,
                    framework=self.oww_framework,
                    target_keyword=self.keyword)
         

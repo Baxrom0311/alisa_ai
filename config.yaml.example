@@ -1,82 +1,98 @@
 # Alisa AI Assistant Configuration
 language: uz
-wake_word:
-  keyword: "alisa"
-  sensitivity: 0.05
-  confirmation_cooldown_sec: 5.0
-  allow_proxy_model: false  # Set to true to allow 'alexa' model as proxy for 'alisa'
 
+# === STT (Speech-to-Text) ===
+stt:
+  # O'zbek uchun fine-tuned model (WER 23.6% — vanilla whisper dan 2x yaxshi)
+  model: BlueRaccoon/whisper-small-uz
+  # Alternativalar:
+  # model: islomov/rubaistt_v2_medium   # WER 17%, lekin sekinroq (769M)
+  # model: small                         # Vanilla whisper (WER ~50% o'zbek uchun)
+  language: uz
+  device: cpu
+  compute_type: int8    # int8 = tez (ARM64), float16 = aniqroq (GPU)
+  cpu_threads: 4
+  beam_size: 3
+  best_of: 3
+  temperature: 0.0
+  vad_filter: true
+  vad_min_silence_ms: 500
+  vad_speech_pad_ms: 200
+
+# whisper.cpp fallback
+whisper:
+  binary: /usr/local/bin/whisper-cli
+  model: /opt/alisa/models/ggml-small.bin
+  language: uz
+
+# === TTS (Text-to-Speech) ===
+tts:
+  # Facebook MMS-TTS — haqiqiy o'zbek ovozi
+  mms_model: facebook/mms-tts-uzb-script_latin
+  # Alternativa: facebook/mms-tts-uzb-script_cyrillic
+  espeak_voice: uz
+  espeak_speed: 140
+
+# Piper TTS fallback (o'zbek model yo'q, turk model ishlatiladi)
+piper:
+  binary: /usr/local/bin/piper
+  model: /opt/alisa/models/tr_TR-fahrettin-medium.onnx
+  output_dir: /tmp/alisa_tts
+
+# === Wake Word ===
+wake_word:
+  keyword: alisa
+  sensitivity: 0.5
+  confirmation_cooldown_sec: 3.0
+  method: auto
+  allow_proxy_model: false
+  openwakeword:
+    model: alexa    # Custom model: /opt/alisa/models/alisa_wake_word.onnx
+    inference_framework: onnx
+  energy_gated:
+    threshold: 500
+    min_duration_ms: 100
+
+# === LLM ===
 llm:
   timeout_sec: 5
   local_timeout_sec: 10
   providers:
     - name: openai
-      api_key: ""  # Set via environment variable OPENAI_API_KEY
+      api_key: ""
       model: gpt-4o-mini
       base_url: https://api.openai.com/v1
     - name: gemini
-      api_key: ""  # Set via environment variable GEMINI_API_KEY
+      api_key: ""
       model: gemini-2.0-flash
     - name: deepseek
-      api_key: ""  # Set via environment variable DEEPSEEK_API_KEY
+      api_key: ""
       model: deepseek-chat
       base_url: https://api.deepseek.com/v1
     - name: grok
-      api_key: ""  # Set via environment variable GROK_API_KEY
+      api_key: ""
       model: grok-2
       base_url: https://api.x.ai/v1
     - name: claude
-      api_key: ""  # Set via environment variable CLAUDE_API_KEY
+      api_key: ""
       model: claude-sonnet-4-20250514
     - name: ollama
       model: qwen2.5:3b
       base_url: http://localhost:11434
 
-stt:
-  model: tiny
-  language: uz
-
-tts:
-  model: uz_UZ-doniyorbek-medium
-  speed: 1.0
-
-whisper:
-  binary: /usr/local/bin/whisper-cli
-  model: /opt/alisa/models/ggml-base.bin
-  language: uz
-
-piper:
-  binary: /usr/local/bin/piper
-  model: /opt/alisa/models/uz_UZ-doniyorbek-medium.onnx
-  output_dir: /tmp/alisa_tts
-
-ollama:
-  url: http://localhost:11434
-  model: qwen2.5:3b
-  timeout: 30
-
+# === Audio ===
 audio:
   sample_rate: 16000
   channels: 1
   input_device: null
   output_device: null
 
-wake_word:
-  keyword: alisa
-  sensitivity: 0.05
-  confirmation_cooldown_sec: 5.0
-  method: auto  # auto, openwakeword, energy_gated
-  openwakeword:
-    model: alexa  # Using alexa as phonetic proxy for alisa
-    inference_framework: onnx
-  energy_gated:
-    threshold: 500
-    min_duration_ms: 100
-
+# === Telegram ===
 telegram:
-  bot_token: ""  # Set via environment variable TELEGRAM_BOT_TOKEN
-  chat_id: ""    # Set via environment variable TELEGRAM_CHAT_ID
+  bot_token: ""
+  chat_id: ""
 
+# === Reception ===
 reception:
   greeting: "Assalomu alaykum! Sizga qanday yordam bera olaman?"
   work_hours: "9:00 - 18:00"
@@ -86,6 +102,7 @@ reception:
   listen_duration: 3
   question_duration: 5
 
+# === Services ===
 scheduler:
   enabled: true
 
@@ -94,11 +111,8 @@ web_dashboard:
   port: 8080
 
 logging:
-  level: INFO  # DEBUG, INFO, WARNING, ERROR
-  file_enabled: false  # Set to true for persistent logging
-  max_file_size_mb: 10
-  backup_count: 3
+  level: INFO
 
 updater:
-  git_branch: null  # Auto-detect current branch if null
-  pip_path: /opt/alisa/venv/bin/pip  # Path to pip in virtual environment
+  git_branch: null
+  pip_path: /opt/alisa/venv/bin/pip

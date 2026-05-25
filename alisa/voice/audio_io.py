@@ -1,16 +1,43 @@
-"""Audio I/O module for recording and playback."""
+"""Audio I/O module for recording and playback with Silero VAD support."""
 
 import asyncio
 import io
 import struct
 import wave
 
+import numpy as np
 import sounddevice as sd
 import structlog
 
 from alisa.core.config import get_config
 
 logger = structlog.get_logger()
+
+# Try to load Silero VAD
+_silero_vad_model = None
+_silero_available = False
+
+def _get_silero_vad():
+    """Load Silero VAD model (singleton)."""
+    global _silero_vad_model, _silero_available
+    if _silero_vad_model is not None:
+        return _silero_vad_model
+    try:
+        import torch
+        model, utils = torch.hub.load(
+            repo_or_dir='snakers4/silero-vad',
+            model='silero_vad',
+            force_reload=False,
+            trust_repo=True,
+        )
+        _silero_vad_model = model
+        _silero_available = True
+        logger.info("silero_vad_loaded")
+        return model
+    except Exception as e:
+        logger.info("silero_vad_unavailable", error=str(e), fallback="energy_based")
+        _silero_available = False
+        return None
 
 
 def record_audio(duration_sec: float = 5.0) -> bytes:
@@ -52,10 +79,8 @@ def play_audio(wav_path: str) -> None:
         with wave.open(wav_path, "rb") as wf:
             rate = wf.getframerate()
             frames = wf.readframes(wf.getnframes())
-            # Convert bytes to int16 array
             samples = struct.unpack(f"<{len(frames)//2}h", frames)
 
-        import numpy as np
         audio_array = np.array(samples, dtype="int16")
         sd.play(audio_array, samplerate=rate, device=device)
         sd.wait()
@@ -79,17 +104,113 @@ def record_until_silence(
     start_timeout_sec: float = 1.5,
     energy_threshold_rms: float = 0.01
 ) -> bytes:
-    """Record audio until silence is detected using energy-based VAD.
+    """Record audio until silence is detected.
     
-    Args:
-        max_sec: Maximum recording duration (hard cap)
-        silence_ms: Milliseconds of silence to stop recording
-        start_timeout_sec: Timeout to wait for speech to start
-        energy_threshold_rms: RMS energy threshold to detect speech
-        
-    Returns:
-        WAV bytes of recorded audio
+    Uses Silero VAD (neural network) if available, falls back to energy-based.
     """
+    vad_model = _get_silero_vad()
+    if vad_model and _silero_available:
+        return _record_with_silero_vad(vad_model, max_sec, silence_ms, start_timeout_sec)
+    else:
+        return _record_with_energy_vad(max_sec, silence_ms, start_timeout_sec, energy_threshold_rms)
+
+
+def _record_with_silero_vad(
+    vad_model,
+    max_sec: float = 8.0,
+    silence_ms: int = 600,
+    start_timeout_sec: float = 1.5,
+) -> bytes:
+    """Record using Silero VAD for accurate speech detection."""
+    import torch
+    
+    cfg = get_config()["audio"]
+    sample_rate = cfg["sample_rate"]  # Must be 16000 for Silero
+    channels = cfg["channels"]
+    device = cfg["input_device"]
+    
+    # Silero VAD works with 512 sample chunks at 16kHz (32ms)
+    chunk_size = 512
+    silence_chunks_needed = int(silence_ms / 32)
+    start_timeout_chunks = int(start_timeout_sec * 1000 / 32)
+    max_chunks = int(max_sec * 1000 / 32)
+    
+    recorded_frames = []
+    silence_count = 0
+    speech_started = False
+    chunks_processed = 0
+    
+    try:
+        with sd.InputStream(
+            samplerate=sample_rate,
+            channels=channels,
+            dtype="int16",
+            device=device,
+            blocksize=chunk_size
+        ) as stream:
+            while chunks_processed < max_chunks:
+                frame, overflowed = stream.read(chunk_size)
+                chunks_processed += 1
+                
+                # Convert to float32 tensor for Silero
+                audio_float = frame.astype(np.float32).flatten() / 32768.0
+                audio_tensor = torch.from_numpy(audio_float)
+                
+                # Get speech probability
+                speech_prob = vad_model(audio_tensor, sample_rate).item()
+                
+                if not speech_started:
+                    if speech_prob > 0.5:
+                        speech_started = True
+                        recorded_frames.append(frame)
+                        silence_count = 0
+                        logger.info("speech_detected_silero", prob=f"{speech_prob:.2f}")
+                    elif chunks_processed > start_timeout_chunks:
+                        logger.warning("speech_start_timeout")
+                        break
+                else:
+                    recorded_frames.append(frame)
+                    if speech_prob < 0.3:
+                        silence_count += 1
+                        if silence_count >= silence_chunks_needed:
+                            logger.info("silence_detected_silero", duration_ms=silence_count * 32)
+                            break
+                    else:
+                        silence_count = 0
+                        
+    except Exception as e:
+        logger.error("silero_vad_record_failed", error=str(e))
+        return b""
+    
+    # Reset VAD state for next call
+    try:
+        vad_model.reset_states()
+    except Exception:
+        pass
+    
+    if not recorded_frames:
+        return b""
+    
+    audio_data = np.concatenate(recorded_frames, axis=0)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(channels)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(audio_data.tobytes())
+    
+    duration = len(recorded_frames) * 32 / 1000
+    logger.info("vad_recording_complete", duration_sec=f"{duration:.1f}", method="silero")
+    return buf.getvalue()
+
+
+def _record_with_energy_vad(
+    max_sec: float = 8.0,
+    silence_ms: int = 600,
+    start_timeout_sec: float = 1.5,
+    energy_threshold_rms: float = 0.01
+) -> bytes:
+    """Record audio until silence using energy-based VAD (fallback)."""
     cfg = get_config()["audio"]
     sample_rate = cfg["sample_rate"]
     channels = cfg["channels"]
@@ -125,8 +246,6 @@ def record_until_silence(
                 frames_since_start += 1
                 
                 # Calculate RMS energy
-                import numpy as np
-                # Ensure frame is float32 for calculation
                 frame_float = frame.astype(np.float32)
                 rms = np.sqrt(np.mean(frame_float ** 2)) / 32768.0  # Normalize to 0-1 range
                 
@@ -162,7 +281,6 @@ def record_until_silence(
         return b""
     
     # Convert frames to WAV bytes
-    import numpy as np
     audio_data = np.concatenate(recorded_frames, axis=0)
     
     buf = io.BytesIO()

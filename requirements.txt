@@ -1,8 +1,9 @@
-# Core dependencies - pinned for reproducible builds
+# Core dependencies
 PyYAML==6.0.2
 structlog==24.4.0
 httpx==0.28.1
 sounddevice==0.5.1
+numpy==2.2.1
 
 # Telegram bot
 python-telegram-bot==21.9
@@ -11,10 +12,17 @@ psutil==6.1.0
 # Web dashboard
 aiohttp==3.11.10
 
+# STT - faster-whisper (supports HuggingFace fine-tuned models)
+faster-whisper==1.1.0
+
+# TTS - Facebook MMS-TTS Uzbek
+transformers==4.47.0
+torch==2.5.1
+torchaudio==2.5.1
+
 # Testing
 pytest==8.3.4
 pytest-asyncio==0.24.0
-numpy==2.2.1
 
-# Optional: More efficient wake word detection
-# openwakeword>=0.5.0
+# Optional: Wake word detection
+# openwakeword>=0.6.0

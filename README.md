@@ -113,6 +113,31 @@ Every run creates:
 
 ## Optional Dependencies
 
+### faster-whisper (Recommended for STT)
+
+For much better speech recognition accuracy (especially for Uzbek):
+
+```bash
+pip install faster-whisper>=1.1.0
+```
+
+When available, Alisa uses faster-whisper instead of whisper.cpp subprocess, providing:
+- 4x faster transcription on CPU
+- Model stays loaded in memory (no cold start)
+- INT8 quantization for ARM64
+- Built-in VAD filter
+- Better accuracy with `small` model for Uzbek
+
+### Silero VAD (Recommended for Speech Detection)
+
+For more accurate voice activity detection:
+
+```bash
+pip install torch torchaudio
+```
+
+Silero VAD provides neural network-based speech detection, much more accurate than energy-based thresholding.
+
 ### openWakeWord (Recommended for Production)
 
 For more efficient wake word detection, you can install openWakeWord:
@@ -128,3 +153,22 @@ When available, Alisa will automatically use openWakeWord instead of the energy-
 - Less dependency on STT for wake word detection
 
 If openWakeWord is not installed, Alisa falls back gracefully to the built-in energy-gated method.
+
+### Custom Wake Word Training
+
+To train a custom "Alisa" wake word model:
+
+```bash
+pip install openwakeword[train]
+python setup/train_wake_word.py --keyword alisa --output models/alisa_wake_word.onnx
+```
+
+## Uzbek Dialect Support
+
+Alisa supports multiple Uzbek dialects through automatic normalization:
+- **Toshkent** (standard/literary)
+- **Xorazm** (qanaqa→qanday, -iyman→-ayman)
+- **Farg'ona** (-sanmi→-sizmi)
+- **Samarqand/Buxoro** (Tajik influence)
+
+Cyrillic input is automatically transliterated to Latin script.
