@@ -1,124 +1,101 @@
-# Alisa AI Assistant Configuration
+active_profile: ayol
+audio:
+  channels: 1
+  input_device: null
+  output_device: null
+  sample_rate: 16000
 language: uz
-
-# === STT (Speech-to-Text) ===
-stt:
-  # O'zbek uchun fine-tuned model (WER 23.6% — vanilla whisper dan 2x yaxshi)
-  model: BlueRaccoon/whisper-small-uz
-  # Alternativalar:
-  # model: islomov/rubaistt_v2_medium   # WER 17%, lekin sekinroq (769M)
-  # model: small                         # Vanilla whisper (WER ~50% o'zbek uchun)
-  language: uz
-  device: cpu
-  compute_type: int8    # int8 = tez (ARM64), float16 = aniqroq (GPU)
-  cpu_threads: 4
-  beam_size: 3
-  best_of: 3
-  temperature: 0.0
-  vad_filter: true
-  vad_min_silence_ms: 500
-  vad_speech_pad_ms: 200
-
-# whisper.cpp fallback
-whisper:
-  binary: /usr/local/bin/whisper-cli
-  model: /opt/alisa/models/ggml-small.bin
-  language: uz
-
-# === TTS (Text-to-Speech) ===
-tts:
-  # Facebook MMS-TTS — haqiqiy o'zbek ovozi
-  mms_model: facebook/mms-tts-uzb-script_latin
-  # Alternativa: facebook/mms-tts-uzb-script_cyrillic
-  espeak_voice: uz
-  espeak_speed: 140
-
-# Piper TTS fallback (o'zbek model yo'q, turk model ishlatiladi)
+llm:
+  local_timeout_sec: 15
+  providers:
+  - base_url: http://localhost:11434
+    model: qwen2.5:0.5b
+    name: ollama
+  timeout_sec: 5
+logging:
+  level: INFO
+ollama:
+  model: qwen2.5:0.5b
+  timeout: 30
+  url: http://localhost:11434
 piper:
   binary: /usr/local/bin/piper
   model: /opt/alisa/models/tr_TR-fahrettin-medium.onnx
   output_dir: /tmp/alisa_tts
-
-# === Wake Word ===
-wake_word:
-  keyword: alisa
-  sensitivity: 0.5
-  confirmation_cooldown_sec: 3.0
-  method: auto
-  allow_proxy_model: false
-  openwakeword:
-    model: alexa    # Custom model: /opt/alisa/models/alisa_wake_word.onnx
-    inference_framework: onnx
-  energy_gated:
-    threshold: 500
-    min_duration_ms: 100
-
-# === LLM ===
-llm:
-  timeout_sec: 5
-  local_timeout_sec: 10
-  providers:
-    - name: openai
-      api_key: ""
-      model: gpt-4o-mini
-      base_url: https://api.openai.com/v1
-    - name: gemini
-      api_key: ""
-      model: gemini-2.0-flash
-    - name: deepseek
-      api_key: ""
-      model: deepseek-chat
-      base_url: https://api.deepseek.com/v1
-    - name: grok
-      api_key: ""
-      model: grok-2
-      base_url: https://api.x.ai/v1
-    - name: claude
-      api_key: ""
-      model: claude-sonnet-4-20250514
-    - name: ollama
-      model: qwen2.5:3b
-      base_url: http://localhost:11434
-
-# === Audio ===
-audio:
-  sample_rate: 16000
-  channels: 1
-  input_device: null
-  output_device: null
-
-# === Telegram ===
-telegram:
-  bot_token: ""
-  chat_id: ""
-
-# === Reception ===
+profiles:
+  ayol:
+    espeak_pitch: 70
+    espeak_speed: 130
+    espeak_voice: uz+f3
+    name: Zilola
+    pitch: +15Hz
+    rate: -5%
+    voice: uz-UZ-MadinaNeural
+  erkak:
+    espeak_pitch: 25
+    espeak_speed: 125
+    espeak_voice: uz
+    name: Vali
+    pitch: -20Hz
+    rate: +5%
+    voice: uz-UZ-SardorNeural
+  robot_ayol:
+    espeak_pitch: 75
+    espeak_speed: 130
+    espeak_voice: uz+f3
+    name: Zilola
+    pitch: +15Hz
+    rate: -5%
+    voice: uz-UZ-MadinaNeural
+  robot_erkak:
+    espeak_pitch: 20
+    espeak_speed: 120
+    espeak_voice: uz
+    name: Vali
+    pitch: -20Hz
+    rate: +5%
+    voice: uz-UZ-SardorNeural
 reception:
-  greeting: "Assalomu alaykum! Sizga qanday yordam bera olaman?"
-  work_hours: "9:00 - 18:00"
-  address: ""
+  address: ''
+  greeting: Assalomu alaykum! Sizga qanday yordam bera olaman?
   voice_threshold: 500
-  max_conversation_exchanges: 3
-  listen_duration: 3
-  question_duration: 5
-
-# === Services ===
+  work_hours: 9:00 - 18:00
 scheduler:
-  enabled: true
-
-web_dashboard:
-  enabled: true
-  port: 8080
-
-logging:
-  level: INFO
-
-# Legacy compatibility
-ollama:
-  url: http://localhost:11434
-  model: qwen2.5:3b
-  timeout: 30
-
+  enabled: false
+stt:
+  compute_type: int8
+  cpu_threads: 4
+  device: cpu
+  language: uz
+  model: small
+telegram:
+  bot_token: ''
+  chat_id: ''
+tts:
+  espeak_pitch: 70
+  espeak_speed: 130
+  espeak_voice: uz+f3
+  pitch: +15Hz
+  rate: -5%
+  voice: uz-UZ-MadinaNeural
 updater:
   git_branch: null
-  pip_path: /opt/alisa/venv/bin/pip
+  pip_path: /home/baxrom/alisa_ai/.venv/bin/pip
+wake_word:
+  allow_proxy_model: false
+  confirmation_cooldown_sec: 3.0
+  energy_gated:
+    min_duration_ms: 100
+    threshold: 500
+  keyword: alisa
+  method: energy_gated
+  openwakeword:
+    inference_framework: onnx
+    model: alexa
+  sensitivity: 0.5
+web_dashboard:
+  enabled: false
+whisper:
+  binary: /usr/local/bin/whisper-cli
+  language: uz
+  model: /opt/alisa/models/ggml-small.bin
