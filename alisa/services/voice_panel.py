@@ -115,9 +115,11 @@ const PAGES=[
 <div class="g2"><div><label>Erkak nomi</label><input type="text" id="p_name_m" value="Vali"></div>
 <div><label>Ayol nomi</label><input type="text" id="p_name_f" value="Zilola"></div></div>
 </div>
-<div class="card"><h2>🔔 Wake word</h2>
-<label>Chaqirish so'zi</label><input type="text" id="p_wake" value="alisa">
-<label>Sensitivity</label><div class="rr"><input type="range" id="p_sens" min="1" max="99" value="50" oninput="U('p_sens')"><span id="p_sens_v">50</span></div>
+<div class="card"><h2>🔔 Wake words</h2>
+<label>Chaqirish so'zlari</label>
+<div id="wake_list"></div>
+<div style="display:flex;gap:8px;margin-top:8px"><input type="text" id="p_wake_new" placeholder="Yangi so'z qo'shish..." style="flex:1"><button class="btn btn-play" onclick="addWake()">+ Qo'shish</button></div>
+<label style="margin-top:12px">Sensitivity</label><div class="rr"><input type="range" id="p_sens" min="1" max="99" value="50" oninput="U('p_sens')"><span id="p_sens_v">50</span></div>
 </div>
 <div class="buttons"><button class="btn btn-save" onclick="saveSection('profile')">💾 Saqlash</button></div>
 <div class="status" id="p_status"></div>`},
@@ -171,7 +173,7 @@ let body={section};
 if(section=='voice'){body.voice=document.getElementById('v_voice').value;body.pitch=(document.getElementById('v_pitch').value>0?'+':'')+document.getElementById('v_pitch').value+'Hz';body.rate=(document.getElementById('v_rate').value>0?'+':'')+document.getElementById('v_rate').value+'%';body.espeak_voice=document.getElementById('v_espeak').value;body.espeak_pitch=+document.getElementById('v_ep').value;body.espeak_speed=+document.getElementById('v_es').value;body.volume=+document.getElementById('v_vol').value;}
 else if(section=='ai'){body.model=document.getElementById('a_model').value;body.timeout=+document.getElementById('a_timeout').value;body.prompt=document.getElementById('a_prompt').value;body.lang=document.getElementById('a_lang').value;}
 else if(section=='audio'){body.sample_rate=+document.getElementById('au_sr').value;body.threshold=+document.getElementById('au_th').value;body.headphone=+document.getElementById('au_hp').value;body.speaker=+document.getElementById('au_sp').value;}
-else if(section=='profile'){body.name_m=document.getElementById('p_name_m').value;body.name_f=document.getElementById('p_name_f').value;body.wake=document.getElementById('p_wake').value;body.sensitivity=+document.getElementById('p_sens').value/100;}
+else if(section=='profile'){body.name_m=document.getElementById('p_name_m').value;body.name_f=document.getElementById('p_name_f').value;body.wake=wakeWords;body.sensitivity=+document.getElementById('p_sens').value/100;}
 let r=await fetch('/api/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
 let d=await r.json();
 let st=document.getElementById(section[0]+'_status');if(st)st.textContent=d.ok?'💾 Saqlandi!':'❌ '+d.error;
@@ -203,9 +205,15 @@ document.getElementById('prof_tags').innerHTML=tags;
 if(d.profiles.erkak)document.getElementById('p_name_m').value=d.profiles.erkak.name;
 if(d.profiles.ayol)document.getElementById('p_name_f').value=d.profiles.ayol.name;
 }
-if(d.wake_word)document.getElementById('p_wake').value=d.wake_word.keyword||'alisa';
+if(d.wake_word){wakeWords=d.wake_word.keywords||[d.wake_word.keyword||'alisa'];renderWakeWords();document.getElementById('p_sens').value=(d.wake_word.sensitivity||0.5)*100;}
 document.querySelectorAll('input[type=range]').forEach(el=>U(el.id));
 });
+
+// Wake words management
+let wakeWords=[];
+function renderWakeWords(){let h='';wakeWords.forEach((w,i)=>{h+=`<span class="tag active" style="margin:3px">${w} <span onclick="removeWake(${i})" style="cursor:pointer;color:#ff5555;margin-left:6px;font-weight:bold">✕</span></span>`;});document.getElementById('wake_list').innerHTML=h||'<span style="color:#666">Hech qanday so\\'z yo\\'q</span>';}
+function addWake(){let el=document.getElementById('p_wake_new');let w=el.value.trim().toLowerCase();if(w&&!wakeWords.includes(w)){wakeWords.push(w);renderWakeWords();el.value='';}}
+function removeWake(i){wakeWords.splice(i,1);renderWakeWords();}
 
 async function setProfile(name){
 let r=await fetch('/api/profile',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({profile:name})});
@@ -260,7 +268,8 @@ async def save_settings(request):
         elif section == 'profile':
             cfg.setdefault('profiles', {}).setdefault('erkak', {})['name'] = data['name_m']
             cfg.setdefault('profiles', {}).setdefault('ayol', {})['name'] = data['name_f']
-            cfg.setdefault('wake_word', {})['keyword'] = data['wake']
+            cfg.setdefault('wake_word', {})['keywords'] = data['wake']
+            cfg.setdefault('wake_word', {})['keyword'] = data['wake'][0] if data['wake'] else 'alisa'
             cfg.setdefault('wake_word', {})['sensitivity'] = data['sensitivity']
         save_full_config(cfg)
         from alisa.core.config import reset_config
