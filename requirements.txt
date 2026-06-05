@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Core dependencies
 PyYAML==6.0.2
 structlog==24.4.0
@@ -26,3 +27,10 @@ pytest-asyncio==0.24.0
 
 # Optional: Wake word detection
 # openwakeword>=0.6.0
+=======
+websockets>=12.0
+aiohttp>=3.9
+numpy>=1.24
+pyaudio>=0.2.14
+edge-tts>=6.1
+>>>>>>> 58da088 (Update Alisa AI architecture)

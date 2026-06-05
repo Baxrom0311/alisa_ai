@@ -1,266 +1,257 @@
-# Alisa — Raspberry Pi Local AI Assistant
+# Alisa v2 — Raspberry Pi O'zbek AI Assistant
 
 ## Goal
 
-Raspberry Pi 4/5 da ishlaydigan o'zbekcha AI assistant. Alisa ovoz bilan gaplashadi, savolarga javob beradi, resepsiya sifatida ishlaydi, va Telegram orqali boshqariladi. Gibrid arxitektura: internet bo'lsa online LLM, bo'lmasa local LLM. Hech qachon qotib qolmaydi.
+Raspberry Pi 5/4 da ishlaydigan real-time o'zbekcha voice assistant. TrooperAI arxitekturasiga asoslangan — WebSocket streaming, sentence-by-sentence TTS, doimiy eshitish. Gibrid LLM (online + offline).
 
-## Til: O'zbekcha
-
-Alisa FAQAT o'zbekcha gaplashadi. System prompt o'zbekcha. Javoblar o'zbekcha. Foydalanuvchi boshqa tilda yozsa ham o'zbekcha javob beradi.
-
-## Core Architecture: Gibrid Multi-LLM
-
-### Fallback Chain (prioritet bo'yicha)
+## Arxitektura (TrooperAI dan olingan, kengaytirilgan)
 
 ```
-Savol keldi → LLM Manager (oxirgi ishlagan providerdan boshlaydi)
-    │
-    ├─ 1. GPT-4o-mini (OpenAI) ─── API key bor → 2-3s javob
-    │
-    ├─ 2. Gemini (Google) ─── GPT ishlamasa → 2-3s
-    │
-    ├─ 3. DeepSeek ─── timeout 5s → keyingisi
-    │
-    ├─ 4. Grok (xAI) ─── timeout 5s → keyingisi
-    │
-    ├─ 5. Claude (Anthropic) ─── timeout 5s → keyingisi
-    │
-    └─ 6. Local LLM (Ollama) ─── OFFLINE, har doim ishlaydi, 3-5s
-            qwen2.5:3b
-
-API key yo'q = skip (0s kutmaydi)
-Ishlagan provider eslab qolinadi = keyingi safar undan boshlaydi
-Real javob vaqti: 2-3 sekund (odatda birinchi providerda ishlaydi)
+┌─────────────────────────────────────────────────────────┐
+│  CLIENT (audio_client.py)                               │
+│  - PyAudio mic capture (16kHz mono, callback)           │
+│  - WebSocket orqali serverga audio stream               │
+│  - Serverdan TTS audio qabul qilish                     │
+│  - Speaker playback (48kHz stereo, threading)           │
+│  - Mic mute during playback (feedback prevention)       │
+│  - Fade in/out for smooth audio                         │
+└────────────────────────┬────────────────────────────────┘
+                         │ WebSocket (ws://localhost:8765)
+                         │ Binary: PCM audio chunks
+                         │ Text: "__END__", "__done__", config
+┌────────────────────────▼────────────────────────────────┐
+│  SERVER (voice_server.py)                               │
+│                                                         │
+│  1. STT: whisper.cpp (o'zbek fine-tuned model)          │
+│     - Real-time, silence detection                      │
+│     - islomov/rubaistt_v2 yoki OvozifyLabs/whisper-uz   │
+│                                                         │
+│  2. LLM: Gibrid fallback chain                          │
+│     ├─ Online: GPT-4o-mini → Gemini → DeepSeek         │
+│     └─ Offline: llama.cpp (qwen2.5:3b)                  │
+│     - Sentence streaming (har gap tayyor — TTS ga)      │
+│                                                         │
+│  3. TTS: Piper (subprocess, --output_raw)               │
+│     - O'zbek: facebook/mms-tts-uzb (offline)            │
+│     - Yoki: edge-tts uz-UZ (online, yaxshi sifat)       │
+│     - Sentence-by-sentence (kutmaydi)                   │
+│     - SoX upsampling 16kHz → 48kHz stereo               │
+│                                                         │
+│  4. Telegram bot (alohida thread)                       │
+│     - /ask, /status, /mode                              │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### LLM Manager qoidalari:
-- Har bir provider uchun API key config.yaml da saqlanadi
-- API key yo'q provider skip qilinadi (0s — umuman chaqirmaydi)
-- Timeout: 5s (online), 10s (local)
-- Timeout bo'lsa keyingisiga o'tadi (HECH QACHON qotib qolmaydi)
-- Oxirgi muvaffaqiyatli provider eslab qolinadi — keyingi safar SHU DAN boshlaydi
-- Barcha providerlar bir xil interface: `async def generate(prompt, system) -> str`
-- Rate limit/quota tugasa keyingisiga o'tadi
-- Local LLM har doim oxirgi fallback (internet kerak emas)
-- Real javob vaqti: 2-3s (chunki ishlagan providerdan boshlaydi)
+## Asosiy tamoyillar (TrooperAI dan)
 
-## Core Features
+1. **Doimiy eshitish** — mic doim yoniq, audio stream uzluksiz
+2. **Silence detection** — odam gapirishni to'xtatganda LLM ga yuboradi
+3. **Sentence streaming** — LLM birinchi gapni yozishi bilan TTS boshlaydi
+4. **Mic mute during playback** — o'z ovozini eshitmasligi uchun
+5. **WebSocket** — client/server alohida, parallel ishlaydi
+6. **Low-effort filter** — "hm", "uh" kabi shovqinlarni filtrlash
 
-### 1. Ovozli suhbat (Voice Conversation)
-- Wake word: "Alisa" (openWakeWord yoki energy-gated)
-- STT: whisper.cpp (local, ARM optimized)
-- LLM: Gibrid (yuqoridagi fallback chain)
-- TTS: Piper TTS (local, o'zbek/rus ovoz)
-- Javob vaqti: < 3 sekund (local), < 5 sekund (online)
-- Qotib qolmaslik: har bir bosqichda timeout, skip, fallback
+## Bizning qo'shimchalar (TrooperAI da yo'q)
 
-### 2. Telegram Bot
-- /ask [savol] — savol yuborish, javob olish
-- /status — CPU, RAM, harorat, qaysi LLM ishlatilmoqda
-- /mode [reception|assistant] — rejim almashtirish
-- /providers — qaysi LLM lar faol, qaysilari o'chiq
-- /restart — Alisa ni qayta ishga tushirish
-- /update — git pull + restart
-- Ovozli xabar → STT → LLM → matnli javob
+1. **Wake word** — "Alisa" deyilganda faollashadi (doim eshitmaydi)
+2. **Gibrid LLM** — online API lar + offline llama.cpp fallback
+3. **O'zbek STT** — whisper.cpp + uz fine-tuned model
+4. **O'zbek TTS** — facebook/mms-tts-uzb yoki edge-tts
+5. **Telegram bot** — remote boshqaruv
+6. **Resepsiya rejimi** — mehmonlarni salomlash
+7. **Multi-provider LLM** — qaysi API key bor bo'lsa shu ishlaydi
 
-### 3. Resepsiya rejimi
-- Mehmonni salomlash (o'zbekcha)
-- FAQ javoblar (ish vaqti, manzil, kim bilan uchrashish)
-- Telegram ga "Mehmon keldi" xabari
-- Oddiy savollar uchun LLM shart emas (knowledge base)
-
-### 4. Online xususiyatlar (internet mavjud bo'lganda)
-- Ob-havo (OpenWeatherMap)
-- Yangiliklar
-- OTA update (git pull)
-- Online LLM (fallback chain)
-
-## Tech Stack
-
-### Hardware
-- Raspberry Pi 4 (4GB) yoki Pi 5
-- USB mikrofon
-- Speaker (3.5mm yoki USB)
-- MicroSD 64GB+
-
-### Software — AI
-- **STT**: whisper.cpp (ARM64 optimized, tiny/base model)
-- **LLM Online**: OpenAI, Gemini, DeepSeek, Grok, Claude (fallback chain)
-- **LLM Local**: Ollama + qwen2.5:3b (offline fallback)
-- **TTS**: Piper TTS (local)
-- **Wake word**: openWakeWord (yoki energy-gated fallback)
-
-### Software — Backend
-- Python 3.11+
-- asyncio + aiohttp
-- python-telegram-bot (async)
-- PyAudio / sounddevice
-- systemd service
-- YAML config
-- structlog
-
-## Project Structure
+## Fayllar strukturasi
 
 ```
 alisa/
-  core/
-    assistant.py         # Asosiy loop: listen → think → speak
-    config.py            # YAML config loader
-  voice/
-    stt.py               # whisper.cpp wrapper
-    tts.py               # Piper TTS wrapper
-    wake_word.py         # Wake word detection
-    audio_io.py          # Mikrofon/speaker
-  brain/
-    llm_manager.py       # Multi-LLM fallback chain (ASOSIY)
-    providers/
-      base.py            # Abstract LLM provider interface
-      openai.py          # GPT-4o-mini
-      gemini.py          # Google Gemini
-      deepseek.py        # DeepSeek
-      grok.py            # xAI Grok
-      claude.py          # Anthropic Claude
-      ollama.py          # Local Ollama (offline)
-    memory.py            # Conversation history
-    online.py            # Weather, news
-  telegram/
-    bot.py               # Telegram bot
-    commands.py          # /ask, /status, /providers, /mode
-  reception/
-    greeter.py           # Mehmon salomlash
-    knowledge.py         # FAQ bazasi
-  services/
-    health.py            # System monitoring
-    updater.py           # OTA update
-    scheduler.py         # Vaqtli vazifalar
-  tests/
-    test_llm_manager.py
-    test_providers.py
-    test_stt.py
-    test_tts.py
-    test_telegram.py
-    test_assistant.py
-  config.yaml            # API keys, sozlamalar
-  setup/
-    install.sh           # Pi ga o'rnatish
-    systemd/alisa.service
+  audio_client.py        # Mic capture + speaker playback + WebSocket client
+  voice_server.py        # STT + LLM + TTS pipeline (WebSocket server)
+  llm_manager.py         # Multi-provider LLM (online/offline fallback)
+  tts_manager.py         # Multi-engine TTS (edge-tts, piper, mms, gTTS)
+  config.json            # Sozlamalar
+  providers/
+    openai_provider.py
+    gemini_provider.py
+    deepseek_provider.py
+    ollama_provider.py   # llama.cpp/Ollama local
+  tts_engines/
+    edge_tts.py          # Microsoft edge-tts (online, natural)
+    piper_tts.py         # Piper (offline, en/ru)
+    mms_tts.py           # Facebook MMS (offline, uz, robotic)
+  telegram_bot.py        # Telegram integration
+  wake_word.py           # "Alisa" wake word detection
+  reception.py           # Resepsiya rejimi
+  web_ui/
+    app.py               # FastAPI web config panel
+    templates/
+      index.html         # Sozlamalar sahifasi
+  utils.py               # Yordamchi funksiyalar
+  models/                # STT/TTS model fayllari
+  voices/                # Piper voice fayllari
 ```
 
-## config.yaml namunasi
+## STT variantlari (o'zbek)
 
-```yaml
-language: uz
-wake_word: "alisa"
+| Model | Hajm | Sifat | Tezlik Pi da |
+|-------|------|-------|--------------|
+| whisper.cpp tiny | 75MB | ⚠️ O'rtacha | ✅ 2-3s |
+| whisper.cpp base | 142MB | ✅ Yaxshi | ⚠️ 4-6s |
+| islomov/rubaistt_v2_medium | 769MB | ✅✅ Zo'r (UZ tuned) | ❌ Sekin |
+| OvozifyLabs/whisper-small-uz | 244MB | ✅ Yaxshi (UZ/EN/RU) | ⚠️ 5-8s |
+| Vosk (small model) | 50MB | ⚠️ UZ yo'q | ✅ 10ms |
 
-llm:
-  timeout_sec: 5
-  local_timeout_sec: 10
-  providers:
-    - name: openai
-      api_key: ""  # bo'sh = skip
-      model: gpt-4o-mini
-      base_url: https://api.openai.com/v1
-    - name: gemini
-      api_key: ""
-      model: gemini-2.0-flash
-    - name: deepseek
-      api_key: ""
-      model: deepseek-chat
-      base_url: https://api.deepseek.com/v1
-    - name: grok
-      api_key: ""
-      model: grok-2
-      base_url: https://api.x.ai/v1
-    - name: claude
-      api_key: ""
-      model: claude-sonnet-4-20250514
-    - name: ollama
-      model: qwen2.5:3b
-      base_url: http://localhost:11434
+**Tavsiya:** whisper.cpp base + o'zbek fine-tune. Yoki Vosk + custom uz model.
 
-stt:
-  model: tiny
-  language: uz
+## TTS variantlari (o'zbek)
 
-tts:
-  model: uz_UZ-doniyorbek-medium
-  speed: 1.0
+| Model | Sifat | Offline | Tezlik |
+|-------|-------|---------|--------|
+| facebook/mms-tts-uzb | ⚠️ Robotic | ✅ | ✅ Tez |
+| edge-tts uz-UZ-MadinaNeural | ✅✅ Natural | ❌ Online | ✅ Tez |
+| edge-tts uz-UZ-SardorNeural | ✅✅ Natural | ❌ Online | ✅ Tez |
+| Piper (custom trained) | ✅ Yaxshi | ✅ | ✅ Tez |
 
-telegram:
-  bot_token: ""
-  chat_id: ""
+**Tavsiya gibrid:**
+- Internet bor → edge-tts (MadinaNeural — ayol, SardorNeural — erkak)
+- Internet yo'q → facebook/mms-tts-uzb (offline fallback)
 
-reception:
-  greeting: "Assalomu alaykum! Sizga qanday yordam bera olaman?"
-  work_hours: "9:00 - 18:00"
-  address: ""
+## LLM fallback chain
+
+```python
+providers = [
+    {"name": "openai", "model": "gpt-4o-mini", "timeout": 5},
+    {"name": "gemini", "model": "gemini-2.0-flash", "timeout": 5},
+    {"name": "deepseek", "model": "deepseek-chat", "timeout": 5},
+    {"name": "grok", "model": "grok-2", "timeout": 5},
+    {"name": "claude", "model": "claude-sonnet", "timeout": 5},
+    {"name": "ollama", "model": "qwen2.5:3b", "timeout": 10},  # offline
+]
+# API key yo'q = skip (0s)
+# Oxirgi ishlagan provider eslab qolinadi
+# Sentence streaming: har gap tayyor bo'lishi bilan TTS ga yuboriladi
 ```
 
-## System Prompt (O'zbekcha)
+## config.json
 
+```json
+{
+  "language": "uz",
+  "wake_word": "alisa",
+  "mic_name": "USB",
+  "audio_output_device": "USB",
+  "volume": 80,
+  "mute_mic_during_playback": true,
+  "fade_duration_ms": 100,
+  "history_length": 6,
+  "system_prompt": "Sen Alisa — aqlli yordamchi. Faqat o'zbek tilida gaplash. Javoblaring qisqa va foydali bo'lsin.",
+  "greeting_message": "Assalomu alaykum! Sizga qanday yordam bera olaman?",
+  "session_timeout": 30,
+  "stt": {
+    "engine": "whisper",
+    "model": "base",
+    "language": "uz"
+  },
+  "tts": {
+    "online": "edge-tts",
+    "online_voice": "uz-UZ-MadinaNeural",
+    "offline": "mms-tts-uzb",
+    "offline_voice": "facebook/mms-tts-uzb"
+  },
+  "llm": {
+    "timeout_sec": 5,
+    "providers": [
+      {"name": "openai", "api_key": "", "model": "gpt-4o-mini"},
+      {"name": "gemini", "api_key": "", "model": "gemini-2.0-flash"},
+      {"name": "deepseek", "api_key": "", "model": "deepseek-chat"},
+      {"name": "ollama", "model": "qwen2.5:3b", "url": "http://localhost:11434"}
+    ]
+  },
+  "telegram": {
+    "bot_token": "",
+    "chat_id": ""
+  },
+  "reception": {
+    "enabled": false,
+    "greeting": "Assalomu alaykum! Kimni kutayapsiz?"
+  }
+}
 ```
-Sen Alisa — aqlli yordamchi. Sen faqat o'zbek tilida gaplashasan.
-Javoblaring qisqa, aniq va foydali bo'lsin.
-Agar bilmasang, "Bilmayman, lekin izlab ko'raman" de.
-Sen Raspberry Pi da ishlaysan, resepsiyada mehmonlarni kutib olasan.
-```
 
-## Constraints
+## Ishlash tartibi
 
-- RAM: < 3GB (OS + Alisa + local model)
-- Javob vaqti: < 3s (local), < 5s (online)
-- HECH QACHON qotib qolmasligi kerak (timeout + fallback)
-- API key yo'q provider avtomatik skip
-- Barcha xatolar graceful handle qilinadi
-- SD card yemirilishini kamaytirish
+1. `voice_server.py` ishga tushadi (WebSocket server :8765)
+2. `audio_client.py` ishga tushadi (mic + speaker)
+3. Client mic dan audio oladi → serverga yuboradi
+4. Server:
+   - Wake word "Alisa" ni eshitadi → faollashadi
+   - STT: audio → matn (whisper.cpp)
+   - LLM: matn → javob (streaming, sentence by sentence)
+   - TTS: har bir gap → audio
+   - Audio → client ga qaytaradi
+5. Client speaker dan o'ynatadi
+6. Telegram bot parallel ishlaydi
 
 ## Acceptance Criteria
 
-- [ ] Wake word "Alisa" ishlaydi
-- [ ] Ovozli savol → o'zbekcha javob < 5 sek
-- [ ] Internet yo'q bo'lsa local LLM ishlaydi
-- [ ] Internet bor bo'lsa online LLM ishlatadi
-- [ ] Bitta provider ishlamasa keyingisiga o'tadi (fallback)
+- [ ] "Alisa" deyilganda faollashadi
+- [ ] O'zbekcha savol → o'zbekcha javob (< 3s birinchi gap)
+- [ ] Sentence streaming ishlaydi (kutmaydi)
+- [ ] Internet yo'q — offline LLM + offline TTS ishlaydi
+- [ ] Internet bor — online LLM + edge-tts (natural ovoz)
+- [ ] Mic mute during playback (echo yo'q)
 - [ ] Telegram /ask ishlaydi
-- [ ] Telegram /status — qaysi provider ishlatilmoqda ko'rsatadi
-- [ ] Telegram /providers — barcha providerlar holati
-- [ ] Resepsiya rejimi ishlaydi
-- [ ] pytest barcha testlar o'tadi
-- [ ] systemd service sifatida 24/7 ishlaydi
-- [ ] config.yaml dan API keylar o'qiladi
+- [ ] 24/7 systemd service
+- [ ] Pi 4GB RAM da sig'adi
 
 ## Development Phases
 
-### Phase 1: LLM Manager + Fallback Chain
-- providers/ papkasi — har bir LLM uchun adapter
-- llm_manager.py — fallback logic, timeout, retry
-- config.yaml dan providerlarni o'qish
-- Test: mock providerlar bilan fallback ishlashini tekshirish
+### Phase 1: WebSocket pipeline (TrooperAI bazasi)
+- audio_client.py (mic → ws → speaker)
+- voice_server.py (ws → STT → LLM → TTS → ws)
+- Avval inglizcha test (whisper base + ollama + piper en)
 
-### Phase 2: Voice Pipeline
-- whisper.cpp STT
-- Piper TTS
-- Wake word
-- assistant.py loop
+### Phase 2: Multi-TTS engine
+- TTS Manager — bir nechta engine ni boshqaradi:
+  - edge-tts (online): uz-UZ-MadinaNeural, uz-UZ-SardorNeural
+  - Piper (offline): ru-RU, en-US voices
+  - facebook/mms-tts-uzb (offline, o'zbek, robotic)
+  - gTTS (online, oddiy)
+- Config dan tanlash mumkin
+- Internet yo'q → avtomatik offline engine ga o'tadi
 
-### Phase 3: Telegram Bot
-- /ask, /status, /providers, /mode
-- Ovozli xabar qabul qilish
+### Phase 3: Gibrid LLM + O'zbek STT
+- llm_manager.py + providers/
+- Fallback chain + sentence streaming
+- whisper.cpp uz model (OvozifyLabs/whisper-small-uz-v1)
 
-### Phase 4: Reception + Online
-- Mehmon salomlash
-- FAQ knowledge base
-- Ob-havo, yangiliklar
+### Phase 4: Wake word + Telegram
+- "Alisa" wake word (openWakeWord)
+- Telegram bot integration (/ask, /status, /mode, /voice)
 
-### Phase 5: Deployment
-- install.sh
+### Phase 5: Web UI Config Panel
+- Oddiy web sahifa (localhost:8080)
+- Sozlamalar:
+  - TTS engine tanlash (MadinaNeural / SardorNeural / Piper ru / Piper en)
+  - LLM provider tanlash va API key kiritish
+  - Wake word sensitivity
+  - Volume, mic device
+  - Resepsiya rejimi on/off
+  - System prompt o'zgartirish
+- FastAPI + HTML (minimal, Pi da ishlaydi)
+
+### Phase 6: Resepsiya + Deploy
+- Reception mode
 - systemd service
-- OTA update
+- install.sh
 
-## Non-Goals
+## Reference
 
-- Web UI
-- Video/kamera
-- Smart home
-- Ko'p foydalanuvchi
-- O'z modelini train qilish
+- TrooperAI: https://github.com/m15-ai/TrooperAI
+- whisper.cpp: https://github.com/ggml-org/whisper.cpp
+- Piper TTS: https://github.com/rhasspy/piper
+- edge-tts: https://github.com/rany2/edge-tts
+- facebook/mms-tts-uzb: https://huggingface.co/facebook/mms-tts-uzb-script_cyrillic
+- islomov/rubaistt_v2: https://huggingface.co/islomov/rubaistt_v2_medium
+- OvozifyLabs/whisper-uz: https://huggingface.co/OvozifyLabs/whisper-small-uz-v1
+- llama.cpp: https://github.com/ggml-org/llama.cpp

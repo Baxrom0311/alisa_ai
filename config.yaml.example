@@ -1,8 +1,64 @@
+<<<<<<< HEAD
 active_profile: ayol
+=======
+# Alisa AI Assistant Configuration
+language: uz
+
+llm:
+  timeout_sec: 5
+  local_timeout_sec: 10
+  providers:
+    - name: openai
+      api_key: ""  # Set via environment variable OPENAI_API_KEY
+      model: gpt-4o-mini
+      base_url: https://api.openai.com/v1
+    - name: gemini
+      api_key: ""  # Set via environment variable GEMINI_API_KEY
+      model: gemini-2.0-flash
+    - name: deepseek
+      api_key: ""  # Set via environment variable DEEPSEEK_API_KEY
+      model: deepseek-chat
+      base_url: https://api.deepseek.com/v1
+    - name: grok
+      api_key: ""  # Set via environment variable GROK_API_KEY
+      model: grok-2
+      base_url: https://api.x.ai/v1
+    - name: claude
+      api_key: ""  # Set via environment variable CLAUDE_API_KEY
+      model: claude-sonnet-4-20250514
+    - name: ollama
+      model: qwen2.5:3b
+      base_url: http://localhost:11434
+
+stt:
+  model: tiny
+  language: uz
+
+tts:
+  model: uz_UZ-doniyorbek-medium
+  speed: 1.0
+
+whisper:
+  binary: /usr/local/bin/whisper-cli
+  model: /opt/alisa/models/ggml-base.bin
+  language: uz
+
+piper:
+  binary: /usr/local/bin/piper
+  model: /opt/alisa/models/uz_UZ-doniyorbek-medium.onnx
+  output_dir: /tmp/alisa_tts
+
+ollama:
+  url: http://localhost:11434
+  model: qwen2.5:3b
+  timeout: 30
+
+>>>>>>> 58da088 (Update Alisa AI architecture)
 audio:
   channels: 1
   input_device: null
   output_device: null
+<<<<<<< HEAD
   sample_rate: 16000
 language: uz
 llm:
@@ -12,6 +68,43 @@ llm:
     model: qwen2.5:0.5b
     name: ollama
   timeout_sec: 5
+=======
+
+wake_word:
+  keyword: alisa
+  sensitivity: 0.05
+  confirmation_cooldown_sec: 5.0
+  allow_proxy_model: false  # Set to true to allow 'alexa' model as proxy for 'alisa'
+  method: auto  # auto, openwakeword, energy_gated
+  openwakeword:
+    model: alexa  # Using alexa as phonetic proxy for alisa
+    inference_framework: onnx
+  energy_gated:
+    threshold: 500
+    min_duration_ms: 100
+
+telegram:
+  bot_token: ""  # Set via environment variable TELEGRAM_BOT_TOKEN
+  chat_id: ""    # Set via environment variable TELEGRAM_CHAT_ID
+
+reception:
+  greeting: "Assalomu alaykum! Sizga qanday yordam bera olaman?"
+  work_hours: "9:00 - 18:00"
+  address: ""
+  phone: "+998 71 123-45-67"
+  voice_threshold: 500
+  max_conversation_exchanges: 3
+  listen_duration: 3
+  question_duration: 5
+
+scheduler:
+  enabled: true
+
+web_dashboard:
+  enabled: true
+  port: 8080
+
+>>>>>>> 58da088 (Update Alisa AI architecture)
 logging:
   level: INFO
 ollama:

@@ -14,3 +14,10 @@ node_modules/
 dist/
 build/
 .DS_Store
+seeed-linux-dtoverlays/
+
+seeed-linux-dtoverlays/
+alisa/config.json
+venv/
+__pycache__/
+*.pyc

@@ -79,6 +79,9 @@ python main.py --mode all --log-level INFO
 # Run installation script
 sudo ./setup/install.sh
 
+# Validate deployment (recommended after installation)
+python validate_pi_deployment.py
+
 # Enable and start service
 sudo systemctl enable alisa.service
 sudo systemctl start alisa.service
