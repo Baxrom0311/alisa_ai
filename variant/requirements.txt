@@ -1,0 +1,6 @@
+edge-tts
+openai
+PyAudio
+pygame
+SpeechRecognition
+pyserial
